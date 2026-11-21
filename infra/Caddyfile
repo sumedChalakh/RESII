@@ -1,0 +1,18 @@
+# Local development routing matching RESII tri-origin architecture
+
+resii.local:80, resii.com:80 {
+    reverse_proxy marketing:3000
+}
+
+app.resii.local:80, app.resii.com:80 {
+    reverse_proxy web:5173
+}
+
+api.resii.local:80, api.resii.com:80 {
+    reverse_proxy api:8100 {
+        header_up Host {host}
+        header_up X-Real-IP {remote}
+        header_up X-Forwarded-For {remote}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}

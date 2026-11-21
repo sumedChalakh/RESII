@@ -1,0 +1,17 @@
+{
+  "name": "resii-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RESII - AI-Powered Career & Resume Platform",
+  "workspaces": [
+    "web",
+    "marketing"
+  ],
+  "scripts": {
+    "dev:web": "npm --prefix web run dev",
+    "dev:marketing": "npm --prefix marketing run dev",
+    "dev:api": "python -m uvicorn api.main:app --reload --port 8000",
+    "build:web": "npm --prefix web run build",
+    "build:marketing": "npm --prefix marketing run build"
+  }
+}
