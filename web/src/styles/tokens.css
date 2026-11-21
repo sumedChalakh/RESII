@@ -1,0 +1,97 @@
+:root {
+  /* RESII Palette - Architectural Canvas & Spruce Ink */
+  --color-bg: #f8f6f0;
+  --color-surface: #ffffff;
+  --color-surface-elevated: #fcfbfa;
+  --color-surface-card: #f5f2ea;
+  --color-border: #e2ddd3;
+  --color-border-subtle: #eeeae2;
+  --color-ink: #18191a;
+  --color-muted: #65615a;
+  --color-faint: #9c978e;
+  
+  --color-primary: #0f4c3a;
+  --color-primary-dark: #092c22;
+  --color-primary-light: #e6f3ee;
+  --color-primary-hover: #145e48;
+  
+  --color-accent: #6366f1;
+  --color-accent-light: #eef2ff;
+  --color-lavender: #c4adff;
+  
+  --color-success: #15803d;
+  --color-success-bg: #f0fdf4;
+  --color-warn: #b45309;
+  --color-warn-bg: #fffbeb;
+  --color-danger: #b91c1c;
+  --color-danger-bg: #fef2f2;
+
+  /* Typography scale */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Elevation & Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 24px -4px rgba(0, 0, 0, 0.08);
+  --shadow-sheet: 0 2px 8px rgba(15, 76, 58, 0.08), 0 18px 40px -18px rgba(15, 76, 58, 0.16);
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* Focus ring */
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+[data-theme="dark"] {
+  --color-bg: #121314;
+  --color-surface: #1a1c1d;
+  --color-surface-elevated: #222527;
+  --color-surface-card: #202325;
+  --color-border: #333639;
+  --color-border-subtle: #272a2c;
+  --color-ink: #f0f2f5;
+  --color-muted: #a0a4a8;
+  --color-faint: #6e7378;
+  
+  --color-primary: #1ca881;
+  --color-primary-dark: #128263;
+  --color-primary-light: rgba(28, 168, 129, 0.15);
+  --color-primary-hover: #22bc91;
+  
+  --color-accent: #818cf8;
+  --color-accent-light: rgba(129, 140, 248, 0.15);
+  
+  --shadow-sheet: 0 2px 8px rgba(0, 0, 0, 0.4), 0 18px 40px -18px rgba(0, 0, 0, 0.6);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+  background-color: var(--color-bg);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
