@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RESII Assistant</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo-area">
+        <div class="logo-badge">R</div>
+        <div class="logo-title">
+          <h1>RESII</h1>
+          <span class="sub-badge">Autofill Assistant</span>
+        </div>
+      </div>
+      <div id="connection-pill" class="pill disconnected">Disconnected</div>
+    </header>
+
+    <!-- Disconnected / Pairing View -->
+    <section id="pairing-section" class="card">
+      <h3>Pair with RESII Platform</h3>
+      <p class="help-text">Connect to your local RESII API on port 8100.</p>
+      <div class="form-group">
+        <label for="pairing-code">Pairing Code or Demo</label>
+        <input type="text" id="pairing-code" placeholder="Enter code (or 'demo')" value="demo">
+      </div>
+      <button id="btn-pair" class="btn btn-primary">Connect Extension</button>
+      <div id="pairing-error" class="error-text hidden"></div>
+    </section>
+
+    <!-- Connected View -->
+    <section id="connected-section" class="card hidden">
+      <!-- User Info -->
+      <div class="user-row">
+        <div>
+          <span class="label-tiny">Connected User</span>
+          <div id="user-display" class="user-name">Alex Rivera</div>
+        </div>
+        <button id="btn-disconnect" class="btn-text">Disconnect</button>
+      </div>
+
+      <!-- Active Tab Context -->
+      <div class="context-box">
+        <div class="context-header">
+          <span class="label-tiny">Detected Portal</span>
+          <span id="adapter-badge" class="badge">Generic</span>
+        </div>
+        <div id="job-title" class="job-title">Scanning page...</div>
+        <div id="job-company" class="job-company">Please open a job application tab</div>
+      </div>
+
+      <!-- Resume Selection -->
+      <div class="form-group">
+        <label for="resume-select" class="label-tiny">Target Resume</label>
+        <select id="resume-select" class="select-input">
+          <option value="">Loading resumes...</option>
+        </select>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="actions">
+        <button id="btn-scan" class="btn btn-primary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+          </svg>
+          Review & Autofill
+        </button>
+        <button id="btn-track" class="btn btn-secondary">
+          Track in RESII
+        </button>
+      </div>
+
+      <div id="status-message" class="status-msg hidden"></div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>Human-Supervised • Zero Autonomous Submissions</span>
+    </footer>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
