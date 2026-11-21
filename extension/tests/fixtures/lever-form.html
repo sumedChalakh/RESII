@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Linear - Frontend Architect</title>
+</head>
+<body>
+  <div class="posting-headline">
+    <h2>Frontend Architect (Design Systems)</h2>
+    <div class="company-name">Linear</div>
+    <div class="posting-categories">
+      <span class="location">San Francisco, CA</span>
+    </div>
+  </div>
+
+  <form id="application-form" class="application-form" action="https://jobs.lever.co/linear/103" method="POST">
+    <div class="application-question">
+      <label>Full name <span class="required">*</span>
+        <input type="text" name="name" id="name" required />
+      </label>
+    </div>
+
+    <div class="application-question">
+      <label>Email <span class="required">*</span>
+        <input type="email" name="email" id="email" required />
+      </label>
+    </div>
+
+    <div class="application-question">
+      <label>Phone
+        <input type="tel" name="phone" id="phone" />
+      </label>
+    </div>
+
+    <div class="application-question">
+      <label>Current location
+        <input type="text" name="location" id="location" />
+      </label>
+    </div>
+
+    <div class="application-question">
+      <label>Resume/CV
+        <input type="file" name="resume" id="resume-upload-input" />
+      </label>
+    </div>
+
+    <div class="application-question">
+      <label>LinkedIn URL
+        <input type="text" name="urls[LinkedIn]" />
+      </label>
+    </div>
+
+    <div class="application-question">
+      <label>GitHub URL
+        <input type="text" name="urls[GitHub]" />
+      </label>
+    </div>
+
+    <div class="application-question">
+      <label>Portfolio / Personal Website
+        <input type="text" name="urls[Portfolio]" />
+      </label>
+    </div>
+
+    <div class="application-question">
+      <label>Additional Information
+        <textarea name="comments" placeholder="Add a cover letter or anything else you'd like to share."></textarea>
+      </label>
+    </div>
+
+    <div class="application-question">
+      <label>Race or Ethnicity (Voluntary Self-Identification)
+        <select name="eeo[race]">
+          <option value="">Decline to self-identify</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="form-submit">
+      <button type="submit" class="template-btn-submit">Submit Application</button>
+    </div>
+  </form>
+</body>
+</html>

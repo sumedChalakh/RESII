@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Senior Distributed Systems Engineer at Stripe</title>
+  <meta name="description" content="Apply for Senior Distributed Systems Engineer at Stripe via Greenhouse">
+</head>
+<body>
+  <div id="header">
+    <h1 class="app-title">Senior Distributed Systems Engineer</h1>
+    <span class="company-name">Stripe</span>
+    <span class="location">San Francisco, CA (Remote)</span>
+  </div>
+
+  <form id="application_form" action="https://boards.greenhouse.io/stripe/jobs/101" method="POST" enctype="multipart/form-data">
+    <div class="field">
+      <label for="first_name">First Name <span class="asterisk">*</span></label>
+      <input type="text" id="first_name" name="first_name" required autocomplete="given-name" />
+    </div>
+
+    <div class="field">
+      <label for="last_name">Last Name <span class="asterisk">*</span></label>
+      <input type="text" id="last_name" name="last_name" required autocomplete="family-name" />
+    </div>
+
+    <div class="field">
+      <label for="email">Email <span class="asterisk">*</span></label>
+      <input type="email" id="email" name="email" required />
+    </div>
+
+    <div class="field">
+      <label for="phone">Phone <span class="asterisk">*</span></label>
+      <input type="tel" id="phone" name="phone" required />
+    </div>
+
+    <div class="field">
+      <label for="resume_file">Resume/CV <span class="asterisk">*</span></label>
+      <input type="file" id="resume_file" name="resume" required />
+    </div>
+
+    <div class="field">
+      <label for="cover_letter_text">Cover Letter</label>
+      <textarea id="cover_letter_text" name="cover_letter_text"></textarea>
+    </div>
+
+    <div class="field">
+      <label for="job_application_answers_1">LinkedIn Profile</label>
+      <input type="text" id="job_application_answers_1" name="job_application[answers][1]" autocomplete="linkedin" />
+    </div>
+
+    <div class="field">
+      <label for="job_application_answers_2">GitHub Profile</label>
+      <input type="text" id="job_application_answers_2" name="job_application[answers][2]" />
+    </div>
+
+    <div class="field">
+      <label for="custom_question_1">Describe a challenging technical architecture decision you made.</label>
+      <textarea id="custom_question_1" name="job_application[answers][3]"></textarea>
+    </div>
+
+    <div class="field">
+      <label for="eeo_gender">Gender Identification</label>
+      <select id="eeo_gender" name="job_application[eeo][gender]">
+        <option value="">Select...</option>
+        <option value="male">Male</option>
+        <option value="female">Female</option>
+        <option value="decline">I prefer not to say</option>
+      </select>
+    </div>
+
+    <div class="submit-wrapper">
+      <button type="submit" id="submit_app" class="button">Submit Application</button>
+    </div>
+  </form>
+</body>
+</html>
