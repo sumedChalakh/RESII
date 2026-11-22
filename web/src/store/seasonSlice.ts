@@ -10,13 +10,13 @@ export interface SeasonState {
 }
 
 const initialState: SeasonState = {
-  level: 2,
-  xp: 340,
-  tier: 'Silver',
-  goalDayProgress: 65,
+  level: 1,
+  xp: 0,
+  tier: 'Bronze',
+  goalDayProgress: 0,
   badges: [
-    { id: 'b1', name: 'First Tailor', icon: '✨', unlocked: true },
-    { id: 'b2', name: 'ATS 90+ Club', icon: '🎯', unlocked: true },
+    { id: 'b1', name: 'First Tailor', icon: '✨', unlocked: false },
+    { id: 'b2', name: 'ATS 90+ Club', icon: '🎯', unlocked: false },
     { id: 'b3', name: 'Auto-Apply Pioneer', icon: '⚡', unlocked: false },
     { id: 'b4', name: '10 Applications', icon: '🚀', unlocked: false },
   ],
