@@ -1,15 +1,15 @@
 {
   "manifest_version": 3,
   "name": "RESII — AI Application Autofill & Tracker",
+  "short_name": "RESII",
   "version": "1.0.0",
-  "description": "Human-supervised AI application assistant connecting RESII intelligence to Greenhouse, Lever, Workday, and custom career portals.",
+  "description": "Human-supervised AI application assistant connecting RESII intelligence to Workday, Greenhouse, Lever, Google, Microsoft, and custom career portals.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
   "action": {
-    "default_popup": "popup/index.html",
     "default_title": "RESII Application Assistant"
   },
   "background": {
@@ -19,12 +19,32 @@
   "content_scripts": [
     {
       "matches": [
+        "https://*.csod.com/*",
+        "https://*.icims.com/*",
         "https://boards.greenhouse.io/*",
+        "https://job-boards.greenhouse.io/*",
         "https://jobs.lever.co/*",
         "https://*.myworkdayjobs.com/*",
         "https://*.linkedin.com/jobs/*",
-        "http://*/*",
-        "https://*/*"
+        "https://careers.google.com/*",
+        "https://*.google.com/about/careers/*",
+        "https://careers.microsoft.com/*",
+        "https://jobs.careers.microsoft.com/*",
+        "https://docs.google.com/forms/*",
+        "https://forms.gle/*",
+        "https://forms.office.com/*",
+        "https://*.forms.office.com/*",
+        "https://forms.microsoft.com/*",
+        "https://*.smartrecruiters.com/*",
+        "https://jobs.smartrecruiters.com/*",
+        "https://jobs.ashbyhq.com/*",
+        "https://*.bamboohr.com/*",
+        "https://apply.workable.com/*",
+        "https://*.taleo.net/*",
+        "https://*/*",
+        "http://127.0.0.1/*",
+        "http://localhost/*",
+        "file:///*"
       ],
       "js": ["content/index.js"],
       "run_at": "document_idle"
