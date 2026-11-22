@@ -6,6 +6,15 @@ DEFAULT_DEV_SECRET = "resii_super_secret_development_session_key_2026"
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DATA_DIR = os.path.join(BASE_DIR, "data")
 
+# Load local .env safely without overriding explicitly set environment variables
+try:
+    from dotenv import load_dotenv
+    _env_path = os.path.join(BASE_DIR, ".env")
+    if os.path.isfile(_env_path):
+        load_dotenv(_env_path, override=False)
+except ImportError:
+    pass
+
 def _default_trusted_proxies() -> List[str]:
     raw = os.getenv("TRUSTED_PROXIES", "127.0.0.1,::1,localhost")
     return [p.strip().lower() for p in raw.split(",") if p.strip()]
@@ -38,6 +47,18 @@ class Settings(BaseModel):
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY", None)
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY", None)
     CREDENTIAL_ENCRYPTION_KEY: Optional[str] = os.getenv("CREDENTIAL_ENCRYPTION_KEY", None)
+    OPENROUTER_API_KEY: Optional[str] = os.getenv("OPENROUTER_API_KEY", None)
+    OPENROUTER_API_KEY_BACKUP: Optional[str] = os.getenv("OPENROUTER_API_KEY_BACKUP", None)
+    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "openrouter/free")
+    OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    HUGGINGFACE_API_KEY: Optional[str] = os.getenv("HUGGINGFACE_API_KEY", None)
+    HUGGINGFACE_API_KEY_BACKUP: Optional[str] = os.getenv("HUGGINGFACE_API_KEY_BACKUP", None)
+    ADZUNA_APP_ID: Optional[str] = os.getenv("ADZUNA_APP_ID", None)
+    ADZUNA_APP_KEY: Optional[str] = os.getenv("ADZUNA_APP_KEY", None)
+    JOB_SYNC_INTERVAL_HOURS: int = int(os.getenv("JOB_SYNC_INTERVAL_HOURS", "24"))
+    GOOGLE_CLIENT_ID: Optional[str] = os.getenv("GOOGLE_CLIENT_ID", None)
+    GOOGLE_CLIENT_SECRET: Optional[str] = os.getenv("GOOGLE_CLIENT_SECRET", None)
+    GOOGLE_REDIRECT_URI: str = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8100/api/v3/auth/google/callback")
 
     @model_validator(mode="after")
     def resolve_defaults(self):
@@ -60,11 +81,14 @@ class Settings(BaseModel):
 
         # Resolve COOKIE_SECURE: env var if present, else True for production, False for dev
         if self.COOKIE_SECURE is None:
-            env_val = os.getenv("COOKIE_SECURE")
-            if env_val is not None:
-                self.COOKIE_SECURE = env_val.lower() == "true"
+            if self.ENVIRONMENT == "production":
+                self.COOKIE_SECURE = True
             else:
-                self.COOKIE_SECURE = (self.ENVIRONMENT == "production")
+                env_val = os.getenv("COOKIE_SECURE")
+                if env_val is not None:
+                    self.COOKIE_SECURE = env_val.lower() == "true"
+                else:
+                    self.COOKIE_SECURE = False
         return self
 
     @property
