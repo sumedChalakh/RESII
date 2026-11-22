@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, status, Request
 from pydantic import BaseModel
 
+from api.config import settings
 from api.auth import get_current_user_required
 from api.schemas import UserSession
 from api.resumes import RESUMES_DB
@@ -18,6 +19,7 @@ from api.models import (
     CoverLetterModel,
     AIProviderSettingModel,
     ResumeModel,
+    TailoredResumeModel,
 )
 from api.crypto import encrypt_credential, decrypt_credential, mask_credential
 from api.ai.schemas import (
@@ -73,6 +75,14 @@ class VerifyClaimRequest(BaseModel):
     claim: str
     resume_id: Optional[str] = "primary"
 
+class TailorAndAttachRequest(BaseModel):
+    resume_id: Optional[str] = "primary"
+    job_description: str
+    job_title: Optional[str] = "Target Role"
+    company_name: Optional[str] = "Target Company"
+    accepted_changes: Optional[List[Dict[str, Any]]] = None
+    target_format: Optional[str] = "docx"
+
 
 def _get_user_ai_config(db, user_id: str) -> AIProviderConfig:
     setting = db.query(AIProviderSettingModel).filter(AIProviderSettingModel.user_id == user_id).first()
@@ -84,15 +94,55 @@ def _get_user_ai_config(db, user_id: str) -> AIProviderConfig:
             except Exception:
                 raw_key = None
 
+        raw_backup_key = None
+        if getattr(setting, "api_key_backup_encrypted", None):
+            try:
+                raw_backup_key = decrypt_credential(setting.api_key_backup_encrypted)
+            except Exception:
+                raw_backup_key = None
+
         return AIProviderConfig(
             provider=setting.provider,
             model=setting.model,
             base_url=setting.base_url,
             api_key=raw_key,
+            api_key_backup=raw_backup_key,
             temperature=setting.temperature,
             timeout_seconds=setting.timeout_seconds
         )
-    return AIProviderConfig()
+
+    # If no DB override, resolve from application settings
+    prov = (getattr(settings, "LLM_PROVIDER", None) or "freeflow").lower()
+    if prov not in ("freeflow", "ollama", "gemini", "openai_compatible", "openai", "mock", "openrouter", "huggingface"):
+        prov = "freeflow"
+
+    model = getattr(settings, "LLM_MODEL", None)
+    base_url = None
+    api_key = None
+    api_key_backup = None
+
+    if prov == "openrouter":
+        model = model or getattr(settings, "OPENROUTER_MODEL", "deepseek/deepseek-r1:free")
+        base_url = getattr(settings, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+        api_key = getattr(settings, "OPENROUTER_API_KEY", None)
+        api_key_backup = getattr(settings, "OPENROUTER_API_KEY_BACKUP", None)
+    elif prov == "huggingface":
+        api_key = getattr(settings, "HUGGINGFACE_API_KEY", None)
+        api_key_backup = getattr(settings, "HUGGINGFACE_API_KEY_BACKUP", None)
+    elif prov in ("openai", "openai_compatible"):
+        api_key = getattr(settings, "OPENAI_API_KEY", None)
+    elif prov == "gemini":
+        api_key = getattr(settings, "GEMINI_API_KEY", None)
+    elif prov == "freeflow":
+        base_url = getattr(settings, "FREEFLOW_API_URL", "http://127.0.0.1:8000/v1")
+
+    return AIProviderConfig(
+        provider=prov,
+        model=model,
+        base_url=base_url,
+        api_key=api_key,
+        api_key_backup=api_key_backup
+    )
 
 
 def _get_user_evidence(db, user_id: str, resume_record: Optional[Dict[str, Any]] = None):
@@ -128,6 +178,9 @@ def get_provider_config(user: UserSession = Depends(get_current_user_required)):
     with SessionLocal() as db:
         cfg = _get_user_ai_config(db, user.id)
         setting = db.query(AIProviderSettingModel).filter(AIProviderSettingModel.user_id == user.id).first()
+        redacted = setting.api_key_redacted if (setting and setting.api_key_redacted) else (mask_credential(cfg.api_key) if cfg.api_key else None)
+        redacted_backup = setting.api_key_backup_redacted if (setting and getattr(setting, "api_key_backup_redacted", None)) else (mask_credential(cfg.api_key_backup) if cfg.api_key_backup else None)
+
         return {
             "provider": cfg.provider,
             "model": cfg.model,
@@ -135,7 +188,9 @@ def get_provider_config(user: UserSession = Depends(get_current_user_required)):
             "temperature": cfg.temperature,
             "timeout_seconds": cfg.timeout_seconds,
             "has_api_key": bool(cfg.api_key),
-            "api_key_redacted": setting.api_key_redacted if setting else None
+            "api_key_redacted": redacted,
+            "has_api_key_backup": bool(cfg.api_key_backup),
+            "api_key_backup_redacted": redacted_backup
         }
 
 @router.post("/providers/config")
@@ -152,7 +207,7 @@ def update_provider_config(req: AIProviderConfig, user: UserSession = Depends(ge
         setting.model = req.model
         setting.base_url = req.base_url
 
-        # Handle API key encryption safely
+        # Handle Primary API key encryption safely
         if req.api_key and req.api_key.strip():
             key_val = req.api_key.strip()
             if key_val in ("__CLEAR__", "__DELETE__"):
@@ -164,7 +219,18 @@ def update_provider_config(req: AIProviderConfig, user: UserSession = Depends(ge
                 setting.api_key_redacted = mask_credential(key_val)
             # If masked value submitted, preserve existing encrypted credential without overwriting!
         elif req.api_key == "":
-            # Explicit empty string does not overwrite unless clear token is sent
+            pass
+
+        # Handle Backup API key encryption safely
+        if req.api_key_backup and req.api_key_backup.strip():
+            backup_val = req.api_key_backup.strip()
+            if backup_val in ("__CLEAR__", "__DELETE__"):
+                setting.api_key_backup_encrypted = None
+                setting.api_key_backup_redacted = None
+            elif not ("..." in backup_val or backup_val == "***"):
+                setting.api_key_backup_encrypted = encrypt_credential(backup_val)
+                setting.api_key_backup_redacted = mask_credential(backup_val)
+        elif req.api_key_backup == "":
             pass
 
         setting.temperature = req.temperature
@@ -179,7 +245,9 @@ def update_provider_config(req: AIProviderConfig, user: UserSession = Depends(ge
             "temperature": setting.temperature,
             "timeout_seconds": setting.timeout_seconds,
             "has_api_key": bool(setting.api_key_encrypted),
-            "api_key_redacted": setting.api_key_redacted
+            "api_key_redacted": setting.api_key_redacted,
+            "has_api_key_backup": bool(getattr(setting, "api_key_backup_encrypted", None)),
+            "api_key_backup_redacted": getattr(setting, "api_key_backup_redacted", None)
         }
 
 @router.post("/providers/test")
@@ -207,6 +275,19 @@ def test_provider_connection(config: Optional[AIProviderConfig] = None, user: Us
         )
 
 
+def _resolve_target_resume(db, user_id: str, target_resume_id: Optional[str]):
+    if not target_resume_id or target_resume_id == "primary":
+        pri = db.query(ResumeModel).filter(ResumeModel.user_id == user_id, ResumeModel.is_primary == True).first()
+        if not pri:
+            pri = db.query(ResumeModel).filter(ResumeModel.user_id == user_id).order_by(ResumeModel.updated_at.desc()).first()
+        if pri:
+            return pri.id, RESUMES_DB.get(pri.id)
+    resume = RESUMES_DB.get(target_resume_id)
+    if resume and resume.get("user_id") == user_id:
+        return target_resume_id, resume
+    return None, None
+
+
 # =========================================================================
 # JOB ANALYSIS & MATCHING ENDPOINTS
 # =========================================================================
@@ -221,12 +302,10 @@ def analyze_job(req: ReadWordsRequest, user: UserSession = Depends(get_current_u
 @router.post("/match", response_model=ResumeMatchReport)
 def match_resume(req: ReadWordsRequest, user: UserSession = Depends(get_current_user_required)):
     """Compute evidence-grounded match between candidate claims and target job requirements."""
-    target_resume_id = req.resume_id or "primary"
-    resume = RESUMES_DB.get(target_resume_id)
-    if not resume or resume.get("user_id") != user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target resume not found.")
-
     with SessionLocal() as db:
+        resolved_id, resume = _resolve_target_resume(db, user.id, req.resume_id)
+        if not resume:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target resume not found.")
         p_cfg = _get_user_ai_config(db, user.id)
         ledger = _get_user_evidence(db, user.id, resume)
     
@@ -240,12 +319,10 @@ def read_words(req: ReadWordsRequest, user: UserSession = Depends(get_current_us
     Contract-compatible endpoint for frontend: returns match rate and keyword coverage.
     Grounded in candidate evidence ledger.
     """
-    target_resume_id = req.resume_id or "primary"
-    resume = RESUMES_DB.get(target_resume_id)
-    if not resume or resume.get("user_id") != user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target resume not found.")
-
     with SessionLocal() as db:
+        resolved_id, resume = _resolve_target_resume(db, user.id, req.resume_id)
+        if not resume:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target resume not found.")
         p_cfg = _get_user_ai_config(db, user.id)
         ledger = _get_user_evidence(db, user.id, resume)
 
@@ -280,12 +357,12 @@ def create_tailoring_plan(req: TailorPlanRequest, user: UserSession = Depends(ge
     Generates contextual, evidence-grounded resume tailoring suggestions.
     Guarantees zero fabricated metrics, employers, or skills.
     """
-    target_resume_id = req.resume_id or "primary"
-    resume = RESUMES_DB.get(target_resume_id)
-    if not resume or resume.get("user_id") != user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target resume not found.")
-
     with SessionLocal() as db:
+        resolved_id, resume = _resolve_target_resume(db, user.id, req.resume_id)
+        if not resume:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target resume not found.")
+        target_resume_id = resolved_id
+
         p_cfg = _get_user_ai_config(db, user.id)
         ledger = _get_user_evidence(db, user.id, resume)
 
@@ -540,3 +617,103 @@ def list_cover_letters(user: UserSession = Depends(get_current_user_required)):
                 "created_at": cl.created_at
             } for cl in records]
         }
+
+
+# =========================================================================
+# IN-PLACE LAYOUT-PRESERVING TAILORING & DIRECT ATTACHMENT
+# =========================================================================
+@router.post("/tailor-and-attach")
+def tailor_and_attach(
+    req: TailorAndAttachRequest,
+    user: UserSession = Depends(get_current_user_required)
+):
+    """
+    In-Place Layout-Preserving Resume Tailoring:
+    1. Loads the candidate's original resume without mutating it (Original remains immutable).
+    2. Performs in-place text replacement in DOCX runs/paragraphs or PDF layout budget.
+    3. Strictly enforces page-count preservation (1-page remains 1-page; 2-page remains 2-page).
+    4. Generates a distinct tailored artifact and records a TailoredResumeModel entry.
+    5. Returns Base64-encoded document ready for immediate ATS attachment or direct download.
+    """
+    from api.in_place_tailor import tailor_resume_in_place
+
+    with SessionLocal() as db:
+        resolved_id, resume = _resolve_target_resume(db, user.id, req.resume_id)
+        if not resume:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target resume not found.")
+
+        try:
+            result = tailor_resume_in_place(
+                db=db,
+                user_id=user.id,
+                resume_id=resolved_id,
+                job_description=req.job_description,
+                job_title=req.job_title or "Target Role",
+                company_name=req.company_name or "Target Company",
+                accepted_changes=req.accepted_changes,
+                target_format=req.target_format or "docx"
+            )
+            return result
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"In-place resume tailoring failed: {str(e)}"
+            )
+
+
+@router.get("/tailored-resumes")
+def list_tailored_resumes(user: UserSession = Depends(get_current_user_required)):
+    """List all versioned tailored resume copies created for the candidate."""
+    with SessionLocal() as db:
+        records = db.query(TailoredResumeModel).filter(
+            TailoredResumeModel.user_id == user.id
+        ).order_by(TailoredResumeModel.created_at.desc()).all()
+
+        return [{
+            "id": tr.id,
+            "parent_resume_id": tr.parent_resume_id,
+            "job_title": tr.job_title,
+            "company_name": tr.company_name,
+            "status": tr.status,
+            "applied_at": tr.applied_at,
+            "tailored_filename": tr.tailored_filename,
+            "tailored_format": tr.tailored_format,
+            "page_count": tr.page_count,
+            "ats_score": tr.ats_score,
+            "changes_summary": tr.changes_summary,
+            "created_at": tr.created_at,
+            "updated_at": tr.updated_at
+        } for tr in records]
+
+
+@router.get("/tailored-resumes/{tailored_id}/download")
+def download_tailored_resume(
+    tailored_id: str,
+    user: UserSession = Depends(get_current_user_required)
+):
+    """Downloads a tailored resume artifact owned by the authenticated candidate."""
+    from fastapi.responses import FileResponse
+    from api.storage import storage_manager
+
+    with SessionLocal() as db:
+        record = db.query(TailoredResumeModel).filter(
+            TailoredResumeModel.id == tailored_id,
+            TailoredResumeModel.user_id == user.id
+        ).first()
+
+        if not record:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tailored resume not found.")
+
+        safe_path = os.path.basename(record.tailored_file_path)
+        full_path = os.path.join(storage_manager.base_dir, safe_path).replace("\\", "/")
+
+        if not os.path.exists(full_path):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tailored file not found on disk.")
+
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document" if record.tailored_format == "docx" else "application/pdf"
+        return FileResponse(
+            path=full_path,
+            filename=record.tailored_filename,
+            media_type=media_type
+        )
+
