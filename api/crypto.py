@@ -34,7 +34,11 @@ def get_encryption_key(key_override: Optional[str] = None) -> Optional[bytes]:
     Prefers key_override, then settings.CREDENTIAL_ENCRYPTION_KEY,
     and falls back to a dedicated derivation from settings.SECRET_KEY in development.
     """
-    raw_key = key_override or getattr(settings, "CREDENTIAL_ENCRYPTION_KEY", None) or os.getenv("CREDENTIAL_ENCRYPTION_KEY")
+    raw_key = key_override
+    if raw_key is None and settings is not None:
+        raw_key = getattr(settings, "CREDENTIAL_ENCRYPTION_KEY", None)
+    if raw_key is None and settings is None:
+        raw_key = os.getenv("CREDENTIAL_ENCRYPTION_KEY")
     if raw_key:
         # Check if already a valid 32-byte base64-encoded key
         try:
