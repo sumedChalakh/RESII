@@ -1,37 +1,14 @@
+import os
 from typing import Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
 import copy
 from api.auth import get_current_user_required
 from api.schemas import UserSession
 from api.db import SessionLocal
-from api.models import UserProfileModel, UserPreferenceModel
+from api.models import UserProfileModel, UserPreferenceModel, UserModel
 
 router = APIRouter(prefix="/api/account", tags=["Account"])
-
-USER_PROFILES_BY_ID: Dict[str, Dict[str, Any]] = {
-    "usr_demo_101": {
-        "name": "Alex Rivera",
-        "email": "demo@resii.com",
-        "title": "Senior Full-Stack Engineer",
-        "location": "San Francisco, CA",
-        "bio": "Specializing in high-throughput distributed architectures, React 18 frontend systems, and performance tuning.",
-        "phone": "+1 (555) 234-5678",
-        "website": "https://alexrivera.dev",
-        "google_drive_connected": True,
-        "google_account_email": "alex.rivera.work@gmail.com"
-    }
-}
-
-USER_PREFERENCES_BY_ID: Dict[str, Dict[str, Any]] = {
-    "usr_demo_101": {
-        "email_job_alerts": True,
-        "email_weekly_digest": True,
-        "marketing_emails": False,
-        "theme": "system",
-        "compact_view": False
-    }
-}
 
 class UpdateProfileRequest(BaseModel):
     name: Optional[str] = None
@@ -52,7 +29,7 @@ def _get_user_profile(user_id: str, email: str = "") -> Dict[str, Any]:
     with SessionLocal() as db:
         record = db.query(UserProfileModel).filter(UserProfileModel.user_id == user_id).first()
         if record:
-            data = {
+            return {
                 "name": record.name,
                 "email": record.email,
                 "title": record.title,
@@ -63,12 +40,15 @@ def _get_user_profile(user_id: str, email: str = "") -> Dict[str, Any]:
                 "google_drive_connected": record.google_drive_connected,
                 "google_account_email": record.google_account_email
             }
-            USER_PROFILES_BY_ID[user_id] = data
-            return data
 
-        fallback = USER_PROFILES_BY_ID.get(user_id, {
-            "name": email.split("@")[0].capitalize() if email else "User",
-            "email": email,
+        # Query user model to get real name
+        user_model = db.query(UserModel).filter(UserModel.id == user_id).first()
+        user_name = user_model.name if user_model else (email.split("@")[0].capitalize() if email else "Candidate")
+        user_email = user_model.email if user_model else (email or f"{user_id}@resii.dev")
+
+        default_profile = {
+            "name": user_name,
+            "email": user_email,
             "title": "Software Professional",
             "location": "Remote",
             "bio": "",
@@ -76,30 +56,28 @@ def _get_user_profile(user_id: str, email: str = "") -> Dict[str, Any]:
             "website": "",
             "google_drive_connected": False,
             "google_account_email": None
-        })
-        data = copy.deepcopy(fallback)
+        }
+
         try:
             db_record = UserProfileModel(
                 user_id=user_id,
-                name=data.get("name", "User"),
-                email=data.get("email", email or "user@resii.com"),
-                title=data.get("title"),
-                location=data.get("location"),
-                bio=data.get("bio"),
-                phone=data.get("phone"),
-                website=data.get("website"),
-                google_drive_connected=data.get("google_drive_connected", False),
-                google_account_email=data.get("google_account_email")
+                name=user_name,
+                email=user_email,
+                title="Software Professional",
+                location="Remote",
+                bio="",
+                phone="",
+                website="",
+                google_drive_connected=False,
+                google_account_email=None
             )
             db.add(db_record)
             db.commit()
         except Exception:
             db.rollback()
-        USER_PROFILES_BY_ID[user_id] = data
-        return data
+        return default_profile
 
 def _save_user_profile(user_id: str, profile_data: Dict[str, Any]) -> None:
-    USER_PROFILES_BY_ID[user_id] = profile_data
     with SessionLocal() as db:
         record = db.query(UserProfileModel).filter(UserProfileModel.user_id == user_id).first()
         if record:
@@ -136,42 +114,37 @@ def _get_user_preferences(user_id: str) -> Dict[str, Any]:
     with SessionLocal() as db:
         record = db.query(UserPreferenceModel).filter(UserPreferenceModel.user_id == user_id).first()
         if record:
-            data = {
+            return {
                 "email_job_alerts": record.email_job_alerts,
                 "email_weekly_digest": record.email_weekly_digest,
                 "marketing_emails": record.marketing_emails,
                 "theme": record.theme,
                 "compact_view": record.compact_view
             }
-            USER_PREFERENCES_BY_ID[user_id] = data
-            return data
 
-        fallback = USER_PREFERENCES_BY_ID.get(user_id, {
+        default_prefs = {
             "email_job_alerts": True,
             "email_weekly_digest": True,
             "marketing_emails": False,
             "theme": "system",
             "compact_view": False
-        })
-        data = copy.deepcopy(fallback)
+        }
         try:
             db_record = UserPreferenceModel(
                 user_id=user_id,
-                email_job_alerts=data.get("email_job_alerts", True),
-                email_weekly_digest=data.get("email_weekly_digest", True),
-                marketing_emails=data.get("marketing_emails", False),
-                theme=data.get("theme", "system"),
-                compact_view=data.get("compact_view", False)
+                email_job_alerts=True,
+                email_weekly_digest=True,
+                marketing_emails=False,
+                theme="system",
+                compact_view=False
             )
             db.add(db_record)
             db.commit()
         except Exception:
             db.rollback()
-        USER_PREFERENCES_BY_ID[user_id] = data
-        return data
+        return default_prefs
 
 def _save_user_preferences(user_id: str, prefs_data: Dict[str, Any]) -> None:
-    USER_PREFERENCES_BY_ID[user_id] = prefs_data
     with SessionLocal() as db:
         record = db.query(UserPreferenceModel).filter(UserPreferenceModel.user_id == user_id).first()
         if record:
@@ -240,19 +213,43 @@ def update_preferences(req: UpdatePreferencesRequest, user: UserSession = Depend
 
 @router.get("/google-drive/status")
 def google_drive_status(user: UserSession = Depends(get_current_user_required)):
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    is_configured = bool(client_id and client_secret)
+
     profile = _get_user_profile(user.id, user.email)
     return {
-        "connected": profile.get("google_drive_connected", False),
-        "email": profile.get("google_account_email")
+        "connected": profile.get("google_drive_connected", False) if is_configured else False,
+        "email": profile.get("google_account_email") if is_configured else None,
+        "configured": is_configured,
+        "status": "connected" if (is_configured and profile.get("google_drive_connected")) else ("unconfigured" if not is_configured else "disconnected")
     }
 
 @router.post("/google-drive/connect")
 def google_drive_connect(user: UserSession = Depends(get_current_user_required)):
-    profile = _get_user_profile(user.id, user.email)
-    profile["google_drive_connected"] = True
-    profile["google_account_email"] = user.email
-    _save_user_profile(user.id, profile)
-    return {"status": "connected", "email": profile["google_account_email"]}
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    if not (client_id and client_secret):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google Drive integration is unconfigured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in production to enable OAuth authorization."
+        )
+
+    # In production with OAuth credentials, return the consent URL
+    redirect_uri = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/account/google-callback"
+    auth_url = (
+        f"https://accounts.google.com/o/oauth2/v2/auth?"
+        f"client_id={client_id}&"
+        f"redirect_uri={redirect_uri}&"
+        f"response_type=code&"
+        f"scope=https://www.googleapis.com/auth/drive.file&"
+        f"access_type=offline&prompt=consent"
+    )
+    return {
+        "status": "auth_required",
+        "auth_url": auth_url,
+        "message": "Redirect to Google OAuth consent screen."
+    }
 
 @router.post("/google-drive/disconnect")
 def google_drive_disconnect(user: UserSession = Depends(get_current_user_required)):
