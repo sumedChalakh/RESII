@@ -12,10 +12,11 @@ class ProviderHealthResponse(BaseModel):
     models: List[str] = Field(default_factory=list)
 
 class AIProviderConfig(BaseModel):
-    provider: Literal["freeflow", "ollama", "gemini", "openai_compatible", "mock"] = "freeflow"
+    provider: Literal["freeflow", "ollama", "gemini", "openai_compatible", "openai", "mock", "openrouter", "huggingface"] = "freeflow"
     model: Optional[str] = None
     base_url: Optional[str] = None
     api_key: Optional[str] = None
+    api_key_backup: Optional[str] = None
     temperature: float = Field(default=0.2, ge=0.0, le=1.0)
     timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
 
