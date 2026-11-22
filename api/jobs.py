@@ -6,7 +6,19 @@ from pydantic import BaseModel
 from api.auth import get_current_user_optional, get_current_user_required
 from api.schemas import UserSession
 from api.db import SessionLocal
-from api.models import JobApplicationModel, SavedSearchModel
+from api.models import (
+    JobApplicationModel,
+    SavedSearchModel,
+    JobListingModel,
+    CompanyRegistryModel,
+    JobSyncLogModel,
+    ResumeModel,
+    UserProfileModel,
+    UserPreferenceModel
+)
+from api.ai.evidence import build_evidence_ledger
+from api.jobs_engine.service import job_discovery_service
+from api.jobs_engine.registry import register_company, list_companies
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
 
@@ -180,54 +192,497 @@ class SavedSearchRequest(BaseModel):
     query: str
     is_remote: Optional[bool] = False
 
+from sqlalchemy import or_, and_, desc
+from api.jobs_engine.registry import detect_ats_from_career_url
+
+class CompanyRegistrationRequest(BaseModel):
+    name: str
+    career_page_url: Optional[str] = None
+    ats_provider: Optional[str] = None
+    ats_board_token: Optional[str] = None
+    website_url: Optional[str] = None
+    country: Optional[str] = "India"
+
+class SyncJobsRequest(BaseModel):
+    company_id: Optional[str] = None
+    source: Optional[str] = None
+
+def _verify_admin_access(user: UserSession):
+    """
+    Enforces strict administrator authorization for job discovery orchestration endpoints.
+    Requires explicit 'admin' role or 'admin' entitlement. Regular users (even with 'job_search'
+    entitlements) are rejected with HTTP 403 Forbidden.
+    """
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required."
+        )
+    is_admin = (
+        user.role == "admin"
+        or "admin" in (user.entitlements or [])
+    )
+    if not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privilege required to manage job providers and triggers."
+        )
+
+def _format_job_model(
+    job: JobListingModel,
+    resume_doc: Optional[dict] = None,
+    profile_record: Optional[dict] = None,
+    preferences_record: Optional[dict] = None,
+    target_role: Optional[str] = None,
+    ledger: Optional[Any] = None
+) -> Dict[str, Any]:
+    skills = (job.required_skills or []) + (job.preferred_skills or [])
+    match_pct = None
+    match_report = None
+    if resume_doc:
+        try:
+            match_report = job_discovery_service.calculate_resume_job_match(
+                resume_doc=resume_doc,
+                job=job,
+                profile_record=profile_record,
+                preferences_record=preferences_record,
+                target_role=target_role,
+                ledger=ledger
+            )
+            match_pct = match_report.get("match_percentage")
+        except Exception:
+            pass
+    else:
+        match_report = {
+            "status": "no_resume",
+            "message": "Upload or select a resume to calculate AI fit score."
+        }
+
+    domain = job.company_website or ""
+    if domain:
+        domain = domain.replace("https://", "").replace("http://", "").split("/")[0]
+
+    return {
+        "id": job.id,
+        "external_job_id": job.external_job_id,
+        "title": job.job_title,
+        "company": job.company_name,
+        "company_website": job.company_website,
+        "logo_url": f"https://logo.clearbit.com/{domain}" if domain else None,
+        "location": job.location,
+        "city": job.city,
+        "country": job.country,
+        "is_remote": job.workplace_type == "remote",
+        "workplace_type": job.workplace_type,
+        "employment_type": job.employment_type,
+        "experience_level": job.experience_level,
+        "salary_range": job.salary_formatted or "Competitive",
+        "salary_min": job.salary_min,
+        "salary_max": job.salary_max,
+        "salary_currency": job.salary_currency,
+        "skills": skills if skills else ["Software Engineering"],
+        "required_skills": job.required_skills or [],
+        "preferred_skills": job.preferred_skills or [],
+        "department": job.department or "Engineering",
+        "match_percentage": match_pct,
+        "match_report": match_report,
+        "posted_at": job.posted_at,
+        "description": job.description,
+        "apply_url": job.application_url,
+        "application_url": job.application_url,
+        "source_name": job.source_name,
+        "verification_status": job.verification_status,
+        "last_verified_at": job.last_verified_at
+    }
+
 @router.get("/feed")
 def get_jobs_feed(
     query: Optional[str] = Query(None),
     company: Optional[str] = Query(None),
+    location: Optional[str] = Query(None),
+    country: Optional[str] = Query(None),
     remote_only: Optional[bool] = Query(False),
+    workplace_type: Optional[str] = Query(None),
+    experience_level: Optional[str] = Query(None),
+    employment_type: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
     sort_by: Optional[str] = Query("best_match"),
+    resume_id: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(15, ge=1, le=100),
     user: Optional[UserSession] = Depends(get_current_user_optional)
 ):
-    results = list(JOBS_FEED_DB)
-    
-    if remote_only:
-        results = [j for j in results if j["is_remote"]]
-        
-    if query:
-        q = query.lower()
-        results = [
-            j for j in results 
-            if q in j["title"].lower() 
-            or any(q in s.lower() for s in j["skills"])
-            or q in j["description"].lower()
-        ]
-        
-    if company:
-        c = company.lower()
-        results = [j for j in results if c in j["company"].lower()]
-        
-    if sort_by == "best_match":
-        results.sort(key=lambda j: j["match_percentage"], reverse=True)
-        
-    return {
-        "jobs": results,
-        "total": len(results),
-        "rank_status_token": "rank_sync_completed"
-    }
+    with SessionLocal() as db:
+        db_job_count = db.query(JobListingModel).filter(JobListingModel.is_active == True).count()
+
+        if db_job_count > 0:
+            q = db.query(JobListingModel).filter(JobListingModel.is_active == True)
+
+            if remote_only:
+                q = q.filter(JobListingModel.workplace_type == "remote")
+            elif workplace_type:
+                q = q.filter(JobListingModel.workplace_type == workplace_type.lower())
+
+            if country and country.lower() != "all":
+                q = q.filter(JobListingModel.country.ilike(f"%{country}%"))
+
+            if location:
+                q = q.filter(or_(
+                    JobListingModel.location.ilike(f"%{location}%"),
+                    JobListingModel.city.ilike(f"%{location}%")
+                ))
+
+            if company:
+                q = q.filter(JobListingModel.company_name.ilike(f"%{company}%"))
+
+            if experience_level and experience_level.lower() != "all":
+                q = q.filter(JobListingModel.experience_level == experience_level.lower())
+
+            if employment_type and employment_type.lower() != "all":
+                q = q.filter(JobListingModel.employment_type == employment_type.lower())
+
+            if source and source.lower() != "all":
+                q = q.filter(JobListingModel.source_name == source.lower())
+
+            if query:
+                search_term = f"%{query}%"
+                q = q.filter(or_(
+                    JobListingModel.job_title.ilike(search_term),
+                    JobListingModel.company_name.ilike(search_term),
+                    JobListingModel.description.ilike(search_term),
+                    JobListingModel.location.ilike(search_term)
+                ))
+
+            # Retrieve authenticated user profile and resume data
+            resume_doc = None
+            active_resume = None
+            user_resumes = []
+            profile_record = None
+            preferences_record = None
+            ledger = None
+
+            if user:
+                # User Profile
+                prof = db.query(UserProfileModel).filter(UserProfileModel.user_id == user.id).first()
+                if prof:
+                    profile_record = {
+                        "name": prof.name,
+                        "title": prof.title,
+                        "location": prof.location,
+                        "bio": prof.bio
+                    }
+
+                pref = db.query(UserPreferenceModel).filter(UserPreferenceModel.user_id == user.id).first()
+                if pref:
+                    preferences_record = {
+                        "compact_view": pref.compact_view
+                    }
+
+                # Resumes
+                user_resumes_db = db.query(ResumeModel).filter(ResumeModel.user_id == user.id).all()
+                user_resumes = [
+                    {
+                        "id": r.id,
+                        "title": r.title,
+                        "is_primary": r.is_primary,
+                        "target_role": r.target_role,
+                        "ats_score": r.ats_score,
+                        "updated_at": r.updated_at
+                    }
+                    for r in user_resumes_db
+                ]
+
+                # Specific requested resume or primary or fallback
+                target_res_model = None
+                if resume_id:
+                    target_res_model = next((r for r in user_resumes_db if r.id == resume_id), None)
+                if not target_res_model:
+                    target_res_model = next((r for r in user_resumes_db if r.is_primary), None)
+                if not target_res_model and user_resumes_db:
+                    target_res_model = user_resumes_db[0]
+
+                if target_res_model and isinstance(target_res_model.document, dict):
+                    resume_doc = target_res_model.document
+                    active_resume = {
+                        "id": target_res_model.id,
+                        "title": target_res_model.title,
+                        "is_primary": target_res_model.is_primary,
+                        "target_role": target_res_model.target_role,
+                        "ats_score": target_res_model.ats_score
+                    }
+                    ledger = build_evidence_ledger(
+                        user_id=user.id,
+                        resume_record={"document": resume_doc},
+                        profile_record=profile_record
+                    )
+                    active_resume["total_skills"] = len(ledger.skills)
+
+            total = q.count()
+
+            if sort_by == "best_match" and resume_doc:
+                # Rank top candidate pool for sub-second responsive loading
+                if not query:
+                    candidate_pool = q.order_by(JobListingModel.posted_at.desc()).limit(200).all()
+                else:
+                    candidate_pool = q.order_by(JobListingModel.posted_at.desc()).limit(100).all()
+
+                scored_jobs = [
+                    _format_job_model(
+                        j,
+                        resume_doc=resume_doc,
+                        profile_record=profile_record,
+                        preferences_record=preferences_record,
+                        target_role=active_resume.get("target_role") if active_resume else None,
+                        ledger=ledger
+                    )
+                    for j in candidate_pool
+                ]
+                scored_jobs.sort(
+                    key=lambda j: (j["match_percentage"] is not None, j["match_percentage"] or 0, j["posted_at"] or ""),
+                    reverse=True
+                )
+                offset = (page - 1) * page_size
+                formatted_jobs = scored_jobs[offset : offset + page_size]
+            else:
+                if sort_by == "newest":
+                    q = q.order_by(JobListingModel.posted_at.desc())
+                elif sort_by == "salary_high":
+                    q = q.order_by(JobListingModel.salary_max.desc().nullslast())
+                else:
+                    q = q.order_by(JobListingModel.posted_at.desc())
+
+                offset = (page - 1) * page_size
+                items = q.offset(offset).limit(page_size).all()
+                formatted_jobs = [
+                    _format_job_model(
+                        j,
+                        resume_doc=resume_doc,
+                        profile_record=profile_record,
+                        preferences_record=preferences_record,
+                        target_role=active_resume.get("target_role") if active_resume else None,
+                        ledger=ledger
+                    )
+                    for j in items
+                ]
+
+            total_pages = max(1, (total + page_size - 1) // page_size) if total > 0 else 0
+
+            return {
+                "jobs": formatted_jobs,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "active_resume": active_resume,
+                "user_resumes": user_resumes,
+                "facets": {
+                    "total_active": db_job_count,
+                    "remote_count": db.query(JobListingModel).filter(JobListingModel.is_active == True, JobListingModel.workplace_type == "remote").count(),
+                    "india_count": db.query(JobListingModel).filter(JobListingModel.is_active == True, JobListingModel.country == "India").count()
+                },
+                "rank_status_token": "rank_sync_completed"
+            }
+
+        # Zero fabrication: If no jobs exist in the database, return empty results truthfully
+        return {
+            "jobs": [],
+            "total": 0,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": 0,
+            "active_resume": None,
+            "user_resumes": [],
+            "facets": {
+                "total_active": 0,
+                "remote_count": 0,
+                "india_count": 0
+            },
+            "rank_status_token": "no_jobs_found"
+        }
+
+@router.get("/detail/{job_id}")
+def get_job_detail(
+    job_id: str,
+    resume_id: Optional[str] = Query(None),
+    user: Optional[UserSession] = Depends(get_current_user_optional)
+):
+    with SessionLocal() as db:
+        job = db.query(JobListingModel).filter(JobListingModel.id == job_id).first()
+        if not job:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+
+        resume_doc = None
+        profile_record = None
+        target_role = None
+        ledger = None
+
+        if user:
+            prof = db.query(UserProfileModel).filter(UserProfileModel.user_id == user.id).first()
+            if prof:
+                profile_record = {"name": prof.name, "title": prof.title, "location": prof.location, "bio": prof.bio}
+
+            user_resumes = db.query(ResumeModel).filter(ResumeModel.user_id == user.id).all()
+            target_res = None
+            if resume_id:
+                target_res = next((r for r in user_resumes if r.id == resume_id), None)
+            if not target_res:
+                target_res = next((r for r in user_resumes if r.is_primary), None)
+            if not target_res and user_resumes:
+                target_res = user_resumes[0]
+
+            if target_res and isinstance(target_res.document, dict):
+                resume_doc = target_res.document
+                target_role = target_res.target_role
+                ledger = build_evidence_ledger(user.id, resume_record={"document": resume_doc}, profile_record=profile_record)
+
+        formatted = _format_job_model(job, resume_doc, profile_record=profile_record, target_role=target_role, ledger=ledger)
+
+        # Similar active jobs
+        similar = db.query(JobListingModel).filter(
+            JobListingModel.id != job.id,
+            JobListingModel.is_active == True,
+            or_(
+                JobListingModel.company_name == job.company_name,
+                JobListingModel.workplace_type == job.workplace_type
+            )
+        ).limit(4).all()
+
+        return {
+            "job": formatted,
+            "similar_jobs": [_format_job_model(s, resume_doc, profile_record=profile_record, target_role=target_role, ledger=ledger) for s in similar]
+        }
+
+
+@router.post("/sync")
+def trigger_job_sync(
+    req: Optional[SyncJobsRequest] = None,
+    user: UserSession = Depends(get_current_user_required)
+):
+    _verify_admin_access(user)
+    with SessionLocal() as db:
+        if req and req.company_id:
+            comp = db.query(CompanyRegistryModel).filter(CompanyRegistryModel.id == req.company_id).first()
+            if not comp:
+                raise HTTPException(status_code=404, detail="Company not found")
+            res = job_discovery_service.sync_company(db, comp)
+            return {"status": "completed", "result": res}
+        else:
+            res = job_discovery_service.sync_all_registered_companies(db)
+            return {"status": "completed", "result": res}
+
+@router.get("/companies")
+def get_registered_companies():
+    with SessionLocal() as db:
+        comps = list_companies(db, active_only=False)
+        return {
+            "companies": [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "ats_provider": c.ats_provider,
+                    "ats_board_token": c.ats_board_token,
+                    "career_page_url": c.career_page_url,
+                    "country": c.country,
+                    "status": c.status,
+                    "last_successful_sync": c.last_successful_sync,
+                    "is_active": c.is_active
+                }
+                for c in comps
+            ],
+            "total": len(comps)
+        }
+
+@router.post("/companies")
+def register_new_company(
+    req: CompanyRegistrationRequest,
+    user: UserSession = Depends(get_current_user_required)
+):
+    _verify_admin_access(user)
+    with SessionLocal() as db:
+        provider = req.ats_provider
+        board_token = req.ats_board_token
+
+        if not provider or not board_token:
+            detected = detect_ats_from_career_url(req.career_page_url or "")
+            if detected:
+                provider, board_token = detected
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Could not automatically detect ATS provider. Please provide ats_provider and ats_board_token."
+                )
+
+        try:
+            comp = register_company(
+                db=db,
+                name=req.name,
+                ats_provider=provider,
+                ats_board_token=board_token,
+                career_page_url=req.career_page_url,
+                website_url=req.website_url,
+                country=req.country or "India"
+            )
+        except ValueError as ve:
+            raise HTTPException(status_code=400, detail=str(ve))
+
+        # Attempt immediate synchronization
+        sync_result = job_discovery_service.sync_company(db, comp)
+        return {
+            "company": {
+                "id": comp.id,
+                "name": comp.name,
+                "ats_provider": comp.ats_provider,
+                "ats_board_token": comp.ats_board_token
+            },
+            "sync_result": sync_result
+        }
+
+@router.post("/verify/{job_id}")
+def verify_job_endpoint(
+    job_id: str,
+    user: UserSession = Depends(get_current_user_required)
+):
+    with SessionLocal() as db:
+        res = job_discovery_service.verify_job_status(db, job_id)
+        return res
 
 @router.get("/rank-status/{job_id}")
-def get_rank_status(job_id: str, resume_id: Optional[str] = "primary"):
-    job = next((j for j in JOBS_FEED_DB if j["id"] == job_id), None)
-    if not job:
-        return {"status": "completed", "match_percentage": 85}
+def get_rank_status(
+    job_id: str,
+    resume_id: Optional[str] = "primary",
+    user: Optional[UserSession] = Depends(get_current_user_optional)
+):
+    with SessionLocal() as db:
+        job = db.query(JobListingModel).filter(JobListingModel.id == job_id).first()
+        if not job:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+        resume_doc = None
+        if user:
+            res = db.query(ResumeModel).filter(ResumeModel.user_id == user.id, ResumeModel.is_primary == True).first()
+            if not res:
+                res = db.query(ResumeModel).filter(ResumeModel.user_id == user.id).first()
+            if res and isinstance(res.document, dict):
+                resume_doc = res.document
         
-    return {
-        "status": "completed",
-        "job_id": job_id,
-        "resume_id": resume_id,
-        "match_percentage": job["match_percentage"],
-        "top_aligned_skills": job["skills"][:3]
-    }
+        if resume_doc:
+            report = job_discovery_service.calculate_resume_job_match(resume_doc, job)
+            return {
+                "status": "completed",
+                "job_id": job_id,
+                "resume_id": resume_id,
+                "match_percentage": report["match_percentage"],
+                "top_aligned_skills": report["matched_skills"][:3],
+                "match_report": report
+            }
+        return {
+            "status": "no_resume",
+            "job_id": job_id,
+            "resume_id": resume_id,
+            "match_percentage": None,
+            "top_aligned_skills": (job.required_skills or [])[:3],
+            "message": "Upload or select a resume to calculate fit score."
+        }
 
 def _app_to_dict(a: JobApplicationModel) -> Dict[str, Any]:
     return {
