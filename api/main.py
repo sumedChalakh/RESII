@@ -1,3 +1,4 @@
+import os
 import time
 import hmac
 from fastapi import FastAPI, Request, Response
@@ -15,6 +16,8 @@ from api.season import router as season_router
 from api.billing import router as billing_router
 from api.account import router as account_router
 from api.extension import router as extension_router
+from api.google_docs import router as google_docs_router
+from api.google_auth import router as google_auth_router, alias_router as google_auth_alias_router
 from api.security import unsign_session_id, generate_csrf_token
 from api.database import active_sessions
 from api.db import init_db
@@ -45,6 +48,7 @@ app.add_middleware(
         "https://app.resii.com",
         "https://resii.com"
     ],
+    allow_origin_regex=r"^(chrome-extension|moz-extension)://.*$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,6 +77,7 @@ async def csrf_protect_middleware(request: Request, call_next):
             path = request.url.path
             exempt_paths = [
                 "/api/auth/login",
+                "/api/auth/register",
                 "/api/auth/demo-login",
                 "/api/auth/logout",
                 "/api/auth/csrf-token",
@@ -123,16 +128,49 @@ app.include_router(season_router)
 app.include_router(billing_router)
 app.include_router(account_router)
 app.include_router(extension_router)
+app.include_router(google_docs_router)
+app.include_router(google_auth_router)
+app.include_router(google_auth_alias_router)
+
+@app.on_event("startup")
+async def on_startup():
+    from api.jobs_engine.scheduler import start_scheduler_task
+    start_scheduler_task()
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    from api.jobs_engine.scheduler import stop_scheduler_task
+    await stop_scheduler_task()
 
 @app.get("/api/health")
 def health():
-    return {
-        "status": "healthy",
+    db_ok = False
+    try:
+        from api.db import SessionLocal
+        from sqlalchemy import text
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1")).scalar()
+            db_ok = True
+    except Exception:
+        db_ok = False
+
+    storage_ok = os.path.isdir(settings.STORAGE_DIR) and os.access(settings.STORAGE_DIR, os.W_OK)
+    is_healthy = db_ok and storage_ok
+
+    payload = {
+        "status": "healthy" if is_healthy else "degraded",
         "service": "resii-api",
         "version": "1.0.0",
         "port": settings.PORT,
-        "environment": settings.ENVIRONMENT
+        "environment": settings.ENVIRONMENT,
+        "checks": {
+            "database": "online" if db_ok else "unreachable",
+            "storage": "writable" if storage_ok else "unwritable"
+        }
     }
+    if not is_healthy:
+        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=payload)
+    return payload
 
 if __name__ == "__main__":
     import uvicorn
