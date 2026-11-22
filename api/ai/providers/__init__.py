@@ -10,6 +10,8 @@ from api.ai.providers.base import (
 from api.ai.providers.freeflow import FreeFlowProvider
 from api.ai.providers.ollama import OllamaProvider
 from api.ai.providers.gemini import GeminiProvider
+from api.ai.providers.openrouter import OpenRouterProvider
+from api.ai.providers.huggingface import HuggingFaceProvider
 from api.ai.providers.mock import MockAIProvider
 from api.ai.providers.factory import get_provider, check_all_providers
 
@@ -24,6 +26,8 @@ __all__ = [
     "FreeFlowProvider",
     "OllamaProvider",
     "GeminiProvider",
+    "OpenRouterProvider",
+    "HuggingFaceProvider",
     "MockAIProvider",
     "get_provider",
     "check_all_providers",
