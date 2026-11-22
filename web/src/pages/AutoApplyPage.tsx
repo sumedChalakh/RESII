@@ -146,10 +146,8 @@ export const AutoApplyPage: React.FC = () => {
       const res = await fetch('/api/auto-apply/trigger', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        if (data.submission) {
-          setSubmissions((prev) => [data.submission, ...prev]);
-        }
-        dispatch(addXp({ amount: 50, reason: 'Executed Autonomous Application Cycle' }));
+        alert(data.message || 'Fact vault synchronized with RESII Extension Assistant.');
+        dispatch(addXp({ amount: 20, reason: 'Synchronized Candidate Fact Vault' }));
       }
     } catch (e) {
       console.error(e);
@@ -189,7 +187,7 @@ export const AutoApplyPage: React.FC = () => {
           </div>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Autonomous Auto-Apply Bot</h1>
+              <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Application Assistant & Fact Vault</h1>
               <span style={{
                 fontSize: 12,
                 fontWeight: 700,
@@ -198,11 +196,11 @@ export const AutoApplyPage: React.FC = () => {
                 background: isRunning ? 'var(--color-success-bg)' : 'var(--color-surface-elevated)',
                 color: isRunning ? 'var(--color-success)' : 'var(--color-muted)'
               }}>
-                {isRunning ? '● ACTIVE & MONITORING' : '○ PAUSED'}
+                {isRunning ? '● ASSISTANT ACTIVE' : '○ PAUSED'}
               </span>
             </div>
             <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--color-muted)' }}>
-              Submits tailored resumes to matching company career portals, Greenhouse, and Lever boards based on your criteria.
+              Powers the RESII Extension Assistant to autofill verified facts on Greenhouse, Lever, Workday, and LinkedIn while keeping you in complete submission control.
             </p>
           </div>
         </div>
@@ -225,8 +223,8 @@ export const AutoApplyPage: React.FC = () => {
               gap: 8
             }}
           >
-            <Send size={15} color="var(--color-primary)" />
-            <span>{triggering ? 'Submitting…' : 'Trigger Cycle Now'}</span>
+            <Sparkles size={16} />
+            <span>{triggering ? 'Syncing Vault…' : 'Sync Fact Vault'}</span>
           </button>
 
           <button
