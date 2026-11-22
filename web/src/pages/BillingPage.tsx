@@ -63,13 +63,18 @@ export const BillingPage: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tier, billing_period: 'monthly' })
       });
+      const data = await res.json();
       if (res.ok) {
-        const data = await res.json();
-        setActiveTier(tier);
-        alert(`Successfully upgraded to RESII ${tier.toUpperCase()}! Checkout Session: ${data.checkout_session_id}`);
+        if (data.url) {
+          window.location.href = data.url;
+        } else {
+          setActiveTier(tier);
+        }
+      } else {
+        alert(data.detail || 'Billing checkout is currently unconfigured. Please contact support or configure payment credentials.');
       }
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      alert('Unable to initiate checkout. Please try again later.');
     } finally {
       setLoadingCheckout(null);
     }
