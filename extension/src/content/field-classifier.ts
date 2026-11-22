@@ -30,7 +30,7 @@ export class FieldClassifier {
         type: el.type || el.tagName.toLowerCase(),
         category,
         label: label || el.name || ('placeholder' in el ? (el as any).placeholder : '') || `Field ${idx}`,
-        selector: this.generateSelector(el),
+        selector: this.generateSelector(el, idx),
         confidence: isSensitive ? 0.0 : this.computeConfidence(category, el, label),
         isRequired: el.required || el.getAttribute('aria-required') === 'true',
         proposedValue: '',
@@ -61,11 +61,29 @@ export class FieldClassifier {
   }
 
   private extractLabel(el: HTMLElement): string {
-    // Check aria-label
+    // 1. Check Google Forms question heading
+    const googleFormItem = el.closest('[role="listitem"], .Qr7Oae, .freebirdFormviewerViewNumberedItemContainer');
+    if (googleFormItem) {
+      const headingEl = googleFormItem.querySelector('.M7eMe, [role="heading"], div[dir="auto"].freebirdFormviewerComponentsQuestionBaseTitle, .hoLwm');
+      if (headingEl && headingEl.textContent) {
+        return headingEl.textContent.trim().replace(/\s+/g, ' ');
+      }
+    }
+
+    // 2. Check Microsoft Forms question heading
+    const msFormItem = el.closest('[data-automation-id="questionItem"], .office-form-question');
+    if (msFormItem) {
+      const headingEl = msFormItem.querySelector('[data-automation-id="questionTitle"], .office-form-question-title');
+      if (headingEl && headingEl.textContent) {
+        return headingEl.textContent.trim().replace(/\s+/g, ' ');
+      }
+    }
+
+    // 3. Check aria-label
     const ariaLabel = el.getAttribute('aria-label');
     if (ariaLabel) return ariaLabel.trim();
 
-    // Check label element with "for" matching id
+    // 4. Check label element with "for" matching id
     if (el.id) {
       const labelEl = el.ownerDocument.querySelector(`label[for="${CSS.escape(el.id)}"]`);
       if (labelEl && labelEl.textContent) {
@@ -73,18 +91,26 @@ export class FieldClassifier {
       }
     }
 
-    // Check closest ancestor label
+    // 5. Check closest ancestor label
     const parentLabel = el.closest('label');
     if (parentLabel && parentLabel.textContent) {
       return parentLabel.textContent.trim().replace(/\s+/g, ' ');
     }
 
-    // Check placeholder
+    // 6. Check placeholder
     if ('placeholder' in el && (el as HTMLInputElement).placeholder) {
       return (el as HTMLInputElement).placeholder.trim();
     }
 
-    // Check preceding text or heading in parent container
+    // 7. Check field container label or preceding sibling
+    const fieldContainer = el.closest('.form-group, [class*="field-wrapper" i], [class*="form-group" i], [class*="formField" i], [class*="input-container" i], [class*="inputWrapper" i], [class*="csod" i], [data-tag*="field"]');
+    if (fieldContainer) {
+      const lbl = fieldContainer.querySelector('label, [class*="label" i], [data-tag*="label"], .title');
+      if (lbl && lbl.textContent) {
+        return lbl.textContent.trim().replace(/\s+/g, ' ');
+      }
+    }
+
     const parent = el.parentElement;
     if (parent) {
       const prev = el.previousElementSibling;
@@ -120,9 +146,11 @@ export class FieldClassifier {
       const selectors = adapter.getFieldSelectors();
       for (const [cat, selList] of Object.entries(selectors)) {
         for (const sel of selList) {
-          if (el.matches(sel)) {
-            return cat as FieldCategory;
-          }
+          try {
+            if (el.matches(sel)) {
+              return cat as FieldCategory;
+            }
+          } catch (_) {}
         }
       }
     }
@@ -156,10 +184,16 @@ export class FieldClassifier {
     return rule ? rule.confidence : 0.8;
   }
 
-  private generateSelector(el: HTMLElement): string {
+  private generateSelector(el: HTMLElement, idx: number = 0): string {
     if (el.id) return `#${CSS.escape(el.id)}`;
     if (el.getAttribute('name')) return `${el.tagName.toLowerCase()}[name="${CSS.escape(el.getAttribute('name')!)}"]`;
-    return el.tagName.toLowerCase();
+    const resiiId = `resii_field_${idx}_${Date.now()}`;
+    try {
+      el.setAttribute('data-resii-id', resiiId);
+      return `[data-resii-id="${resiiId}"]`;
+    } catch {
+      return el.tagName.toLowerCase();
+    }
   }
 }
 
