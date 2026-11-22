@@ -23,6 +23,11 @@ export const SeasonPage: React.FC = () => {
       .catch(console.error);
   }, []);
 
+  const displayLevel = seasonData?.current_level ?? level;
+  const displayXp = seasonData?.current_xp ?? xp;
+  const displayTier = seasonData?.tier ?? tier;
+  const displayBadges = seasonData?.badges ?? badges;
+
   const tiers = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond'];
 
   return (
@@ -46,10 +51,10 @@ export const SeasonPage: React.FC = () => {
             <span>RESII SEASON 03 • THE OFFER HUNT</span>
           </div>
           <h1 style={{ fontSize: 28, fontWeight: 800, margin: '8px 0 10px', color: '#fff' }}>
-            Level {level} — {tier} Tier
+            Level {displayLevel} — {displayTier} Tier
           </h1>
           <p style={{ margin: 0, fontSize: 14, opacity: 0.9, maxWidth: 520, lineHeight: 1.5 }}>
-            Every tailored resume, ATS scan, and application earns XP toward your weekly goal, season leaderboard rank, and tier advancement.
+            Every tailored resume, ATS scan, and application earns XP toward your weekly goal, season milestones, and tier advancement.
           </p>
         </div>
 
@@ -61,8 +66,8 @@ export const SeasonPage: React.FC = () => {
           padding: '20px 32px',
           textAlign: 'center'
         }}>
-          <div style={{ fontSize: 36, fontWeight: 800, color: '#fff' }}>{xp} XP</div>
-          <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4, letterSpacing: '0.05em' }}>CURRENT CAREER XP</div>
+          <div style={{ fontSize: 36, fontWeight: 800, color: '#fff' }}>{displayXp} XP</div>
+          <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4, letterSpacing: '0.05em' }}>VERIFIED CAREER XP</div>
         </div>
       </div>
 
@@ -213,7 +218,7 @@ export const SeasonPage: React.FC = () => {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {badges.map((b) => (
+            {displayBadges.map((b: any) => (
               <div
                 key={b.id}
                 style={{
@@ -227,11 +232,13 @@ export const SeasonPage: React.FC = () => {
                   opacity: b.unlocked ? 1 : 0.5
                 }}
               >
-                <div style={{ fontSize: 24 }}>{b.icon}</div>
+                <div style={{ fontSize: 18, color: b.unlocked ? 'var(--color-primary)' : 'var(--color-muted)' }}>
+                  <Award size={20} />
+                </div>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{b.name}</div>
                   <div style={{ fontSize: 11, color: 'var(--color-muted)' }}>
-                    {b.unlocked ? '✓ Unlocked' : 'Locked Milestone'}
+                    {b.unlocked ? '✓ Unlocked Milestone' : b.description || 'Locked Milestone'}
                   </div>
                 </div>
               </div>
