@@ -2,12 +2,21 @@ import re
 from typing import Optional, Dict, Any, List, Set
 from api.ai.schemas import CandidateClaim, CandidateEvidenceLedger
 
+from api.jobs_engine.normalizer import TECH_SKILLS_LEXICON
+
 COMMON_TECH_SKILLS = {
-    "python", "javascript", "typescript", "react", "vue", "angular", "next.js",
-    "fastapi", "django", "flask", "node.js", "express", "go", "golang", "rust",
-    "c++", "c#", "java", "sql", "postgresql", "mysql", "sqlite", "redis",
-    "mongodb", "kafka", "rabbitmq", "aws", "gcp", "azure", "docker", "kubernetes",
-    "git", "ci/cd", "graphql", "rest", "linux", "html", "css", "tailwind", "redux"
+    s.lower() for s in (
+        list(TECH_SKILLS_LEXICON) + [
+            "python", "javascript", "typescript", "react", "vue", "angular", "next.js",
+            "fastapi", "django", "flask", "node.js", "express", "go", "golang", "rust",
+            "c++", "c#", "java", "sql", "postgresql", "mysql", "sqlite", "redis",
+            "mongodb", "kafka", "rabbitmq", "aws", "gcp", "azure", "docker", "kubernetes",
+            "git", "ci/cd", "graphql", "rest", "linux", "html", "css", "tailwind", "redux",
+            "pytorch", "tensorflow", "keras", "pandas", "numpy", "scikit-learn",
+            "machine learning", "deep learning", "nlp", "computer vision", "llm",
+            "bash", "shell", "terraform", "ansible", "microservices", "system design"
+        ]
+    )
 }
 
 def extract_skills_from_text(text: str) -> List[str]:
@@ -19,6 +28,7 @@ def extract_skills_from_text(text: str) -> List[str]:
         if re.search(pattern, lower_text):
             found.add(skill.capitalize() if len(skill) > 3 else skill.upper())
     return sorted(list(found))
+
 
 
 def build_evidence_ledger(
@@ -128,14 +138,15 @@ def build_evidence_ledger(
                         for s in extract_skills_from_text(bullet):
                             all_skills.add(s)
 
-            # Support legacy blocks if present
+            # Support blocks format
+            is_skills_sec = (sec_type in ("skills", "technical_skills") or any(k in sec_title.lower() for k in ("skill", "technolog", "competenc", "tools")))
             for b_idx, blk in enumerate(sec.get("blocks", [])):
                 for l_idx, line in enumerate(blk.get("lines", [])):
                     txt = line.get("text", "").strip()
                     if txt:
                         claims.append(CandidateClaim(
                             id=f"claim_{sec_id}_b{b_idx}_l{l_idx}",
-                            claim_type="experience",
+                            claim_type="skill" if is_skills_sec else "experience",
                             text=txt,
                             provenance="resume_source",
                             source_entity=f"resume:{sec_id}:b{b_idx}:l{l_idx}",
@@ -143,6 +154,20 @@ def build_evidence_ledger(
                         ))
                         for s in extract_skills_from_text(txt):
                             all_skills.add(s)
+
+                        # If this is a skills section, extract verbatim declared skill tokens
+                        if is_skills_sec:
+                            content_text = txt
+                            if ":" in content_text:
+                                content_text = content_text.split(":", 1)[1]
+                            raw_tokens = re.split(r'[,|•·\u2022/;\n]+', content_text)
+                            for tok in raw_tokens:
+                                clean_tok = tok.strip(" ()[]*-_#\"'")
+                                if clean_tok and 1 < len(clean_tok) <= 35:
+                                    # Avoid full sentence phrases
+                                    if len(clean_tok.split()) <= 4:
+                                        all_skills.add(clean_tok)
+
 
     # 3. Ingest confirmed candidate facts
     confirmed_facts = {}
