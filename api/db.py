@@ -2,13 +2,14 @@ import os
 import sqlite3
 import datetime
 from typing import Generator
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, or_, and_
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, Session
 from api.config import settings
 from api.models import (
     Base,
     UserModel,
+    OAuthAccountModel,
     ResumeModel,
     JobApplicationModel,
     SavedSearchModel,
@@ -22,6 +23,11 @@ from api.models import (
     CoverLetterModel,
     AIProviderSettingModel,
     ExtensionPairingCodeModel,
+    CompanyRegistryModel,
+    JobListingModel,
+    JobSyncLogModel,
+    JobVerificationLogModel,
+    TailoredResumeModel,
 )
 from api.security import hash_password
 from api.ingestion import parse_text_into_document_tree
@@ -341,6 +347,155 @@ def seed_demo_data(db: Session):
     db.commit()
 
 
+def seed_initial_companies(db: Session):
+    """
+    Seeds initial curated company registry for ATS job discovery.
+    Prioritizes verified Indian technology companies and global tech leaders with active public ATS boards.
+    """
+    initial_registry = [
+        # Greenhouse Boards (Empirically Verified Live Endpoints)
+        {
+            "id": "comp_gh_inmobi",
+            "name": "InMobi",
+            "career_page_url": "https://www.inmobi.com/company/careers",
+            "ats_provider": "greenhouse",
+            "ats_board_token": "inmobi",
+            "website_url": "https://inmobi.com",
+            "country": "India"
+        },
+        {
+            "id": "comp_gh_stripe",
+            "name": "Stripe",
+            "career_page_url": "https://stripe.com/jobs",
+            "ats_provider": "greenhouse",
+            "ats_board_token": "stripe",
+            "website_url": "https://stripe.com",
+            "country": "Global"
+        },
+        {
+            "id": "comp_gh_datadog",
+            "name": "Datadog",
+            "career_page_url": "https://www.datadoghq.com/careers",
+            "ats_provider": "greenhouse",
+            "ats_board_token": "datadog",
+            "website_url": "https://datadoghq.com",
+            "country": "Global"
+        },
+        {
+            "id": "comp_gh_cloudflare",
+            "name": "Cloudflare",
+            "career_page_url": "https://www.cloudflare.com/careers/jobs",
+            "ats_provider": "greenhouse",
+            "ats_board_token": "cloudflare",
+            "website_url": "https://cloudflare.com",
+            "country": "Global"
+        },
+        # Lever Boards (Empirically Verified Live Endpoints)
+        {
+            "id": "comp_lev_meesho",
+            "name": "Meesho",
+            "career_page_url": "https://www.meesho.io/jobs",
+            "ats_provider": "lever",
+            "ats_board_token": "meesho",
+            "website_url": "https://meesho.io",
+            "country": "India"
+        },
+        {
+            "id": "comp_lev_freshworks",
+            "name": "Freshworks",
+            "career_page_url": "https://www.freshworks.com/company/careers",
+            "ats_provider": "lever",
+            "ats_board_token": "freshworks",
+            "website_url": "https://freshworks.com",
+            "country": "India"
+        },
+        {
+            "id": "comp_lev_spotify",
+            "name": "Spotify",
+            "career_page_url": "https://www.lifeatspotify.com/jobs",
+            "ats_provider": "lever",
+            "ats_board_token": "spotify",
+            "website_url": "https://spotify.com",
+            "country": "Global"
+        },
+        # Ashby Boards (Empirically Verified Live Endpoints)
+        {
+            "id": "comp_ash_signoz",
+            "name": "SigNoz",
+            "career_page_url": "https://signoz.io/careers",
+            "ats_provider": "ashby",
+            "ats_board_token": "signoz",
+            "website_url": "https://signoz.io",
+            "country": "India"
+        },
+        {
+            "id": "comp_ash_openai",
+            "name": "OpenAI",
+            "career_page_url": "https://openai.com/careers",
+            "ats_provider": "ashby",
+            "ats_board_token": "openai",
+            "website_url": "https://openai.com",
+            "country": "Global"
+        },
+        {
+            "id": "comp_ash_ramp",
+            "name": "Ramp",
+            "career_page_url": "https://ramp.com/careers",
+            "ats_provider": "ashby",
+            "ats_board_token": "ramp",
+            "website_url": "https://ramp.com",
+            "country": "Global"
+        },
+        {
+            "id": "comp_ash_ashby",
+            "name": "Ashby",
+            "career_page_url": "https://www.ashbyhq.com/careers",
+            "ats_provider": "ashby",
+            "ats_board_token": "ashby",
+            "website_url": "https://ashbyhq.com",
+            "country": "Global"
+        },
+        {
+            "id": "comp_ash_vapi",
+            "name": "Vapi",
+            "career_page_url": "https://vapi.ai/careers",
+            "ats_provider": "ashby",
+            "ats_board_token": "vapi",
+            "website_url": "https://vapi.ai",
+            "country": "Global"
+        }
+    ]
+
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    for item in initial_registry:
+        existing = db.query(CompanyRegistryModel).filter(
+            or_(
+                CompanyRegistryModel.id == item["id"],
+                and_(
+                    CompanyRegistryModel.ats_provider == item["ats_provider"],
+                    CompanyRegistryModel.ats_board_token == item["ats_board_token"]
+                )
+            )
+        ).first()
+        if not existing:
+            new_comp = CompanyRegistryModel(
+                id=item["id"],
+                name=item["name"],
+                career_page_url=item["career_page_url"],
+                ats_provider=item["ats_provider"],
+                ats_board_token=item["ats_board_token"],
+                website_url=item["website_url"],
+                country=item["country"],
+                status="active",
+                sync_frequency_hours=24,
+                is_active=True,
+                created_at=now_iso,
+                updated_at=now_iso
+            )
+            db.add(new_comp)
+    db.commit()
+
+
 def init_db(custom_engine=None):
     """
     Initializes database schema and executes idempotent migrations/seeding.
@@ -358,6 +513,12 @@ def init_db(custom_engine=None):
             if "api_key_encrypted" not in cols and len(cols) > 0:
                 conn.execute(text("ALTER TABLE ai_provider_settings ADD COLUMN api_key_encrypted TEXT"))
                 conn.commit()
+            if "api_key_backup_encrypted" not in cols and len(cols) > 0:
+                conn.execute(text("ALTER TABLE ai_provider_settings ADD COLUMN api_key_backup_encrypted TEXT"))
+                conn.commit()
+            if "api_key_backup_redacted" not in cols and len(cols) > 0:
+                conn.execute(text("ALTER TABLE ai_provider_settings ADD COLUMN api_key_backup_redacted VARCHAR(128)"))
+                conn.commit()
 
             r_ep = conn.execute(text("PRAGMA table_info(extension_pairing_codes)")).fetchall()
             cols_ep = [row[1] for row in r_ep]
@@ -369,10 +530,30 @@ def init_db(custom_engine=None):
             elif "code_hash" not in cols_ep and len(cols_ep) > 0:
                 conn.execute(text("ALTER TABLE extension_pairing_codes ADD COLUMN code_hash VARCHAR(128)"))
                 conn.commit()
+
+            # Immutability & Layout Preservation migrations for resumes & managed_files
+            r_res = conn.execute(text("PRAGMA table_info(resumes)")).fetchall()
+            cols_res = [row[1] for row in r_res]
+            if "original_format" not in cols_res and len(cols_res) > 0:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN original_format VARCHAR(32) DEFAULT 'docx'"))
+            if "original_file_hash" not in cols_res and len(cols_res) > 0:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN original_file_hash VARCHAR(64)"))
+            if "original_page_count" not in cols_res and len(cols_res) > 0:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN original_page_count INTEGER DEFAULT 1"))
+            conn.commit()
+
+            r_mf = conn.execute(text("PRAGMA table_info(managed_files)")).fetchall()
+            cols_mf = [row[1] for row in r_mf]
+            if "file_hash" not in cols_mf and len(cols_mf) > 0:
+                conn.execute(text("ALTER TABLE managed_files ADD COLUMN file_hash VARCHAR(64)"))
+            if "is_immutable" not in cols_mf and len(cols_mf) > 0:
+                conn.execute(text("ALTER TABLE managed_files ADD COLUMN is_immutable BOOLEAN DEFAULT 1"))
+            conn.commit()
     except Exception:
         pass
 
-    # Seed demo data if appropriate
+    # Seed demo data and company registry if appropriate
     sm = sessionmaker(autocommit=False, autoflush=False, bind=target_engine)
     with sm() as db:
         seed_demo_data(db)
+        seed_initial_companies(db)
