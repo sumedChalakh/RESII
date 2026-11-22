@@ -206,3 +206,88 @@ def test_extension_track_application_lifecycle():
     data_applied = res_applied.json()
     assert data_applied["stage"] == "applied"
     assert data_applied["applied_date"] is not None
+
+
+def test_extension_token_rotation_and_revocation():
+    client.cookies.clear()
+    # 1. Pair extension to obtain initial token
+    pair_res = client.post("/api/v3/extension/pair", json={"pairing_code": "demo"})
+    assert pair_res.status_code == 200
+    token1 = pair_res.json()["token"]
+
+    # Verify token1 works
+    s1 = client.get("/api/v3/extension/status", headers={"Authorization": f"Bearer {token1}"})
+    assert s1.status_code == 200
+
+    # 2. Rotate token
+    rot_res = client.post("/api/v3/extension/rotate-token", headers={"Authorization": f"Bearer {token1}"})
+    assert rot_res.status_code == 200, rot_res.text
+    rot_data = rot_res.json()
+    assert rot_data["status"] == "rotated"
+    token2 = rot_data["token"]
+    assert token2 != token1
+
+    # 3. Old token1 MUST now be rejected with 401
+    s_old = client.get("/api/v3/extension/status", headers={"Authorization": f"Bearer {token1}"})
+    assert s_old.status_code == 401, "Revoked token after rotation was not rejected!"
+
+    # 4. New token2 MUST succeed
+    s_new = client.get("/api/v3/extension/status", headers={"Authorization": f"Bearer {token2}"})
+    assert s_new.status_code == 200
+
+    # 5. Disconnect using token2
+    disc_res = client.post("/api/v3/extension/disconnect", headers={"Authorization": f"Bearer {token2}"})
+    assert disc_res.status_code == 200
+    assert disc_res.json()["status"] == "disconnected"
+
+    # 6. Disconnected token2 MUST now be rejected with 401
+    s_disc = client.get("/api/v3/extension/status", headers={"Authorization": f"Bearer {token2}"})
+    assert s_disc.status_code == 401, "Revoked token after disconnect was not rejected!"
+
+
+def test_extension_real_tailoring_and_match():
+    pair_res = client.post("/api/v3/extension/pair", json={"pairing_code": "demo"})
+    assert pair_res.status_code == 200
+    token = pair_res.json()["token"]
+
+    jd = """
+    We are looking for an AI Engineer - Quality Systems.
+    Responsibilities:
+    - Build evaluation pipelines for LLM agents and benchmarking response fidelity.
+    - Implement RAG architectures using LangGraph and Python.
+    - Evaluate model drift, latency, and explainability with SHAP.
+    Requirements:
+    - 3+ years experience with Python, PySpark, AWS, and LLM benchmarking.
+    """
+
+    # 1. Real resume tailoring via extension endpoint
+    tailor_res = client.post(
+        "/api/v3/extension/tailor",
+        json={
+            "resume_id": "primary",
+            "job_description": jd,
+            "job_title": "AI Engineer - Quality system",
+            "company_name": "Bristol-Myers Squibb"
+        },
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert tailor_res.status_code == 200, tailor_res.text
+    tailor_data = tailor_res.json()
+    assert "review_id" in tailor_data
+    assert "suggestions" in tailor_data
+    assert len(tailor_data["suggestions"]) > 0
+
+    # 2. Real match evaluation via extension endpoint
+    match_res = client.post(
+        "/api/v3/extension/match",
+        json={
+            "resume_id": "primary",
+            "job_description": jd
+        },
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert match_res.status_code == 200, match_res.text
+    match_data = match_res.json()
+    assert "overall_score" in match_data
+    assert isinstance(match_data["overall_score"], (int, float))
+
