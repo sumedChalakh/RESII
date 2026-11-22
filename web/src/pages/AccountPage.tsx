@@ -405,6 +405,8 @@ export const AccountPage: React.FC = () => {
                   const val = e.target.value;
                   setAiProvider(val);
                   if (val === 'mock') setAiModel('mock-grounded-v1');
+                  else if (val === 'openrouter') { setAiModel('deepseek/deepseek-r1:free'); setAiBaseUrl('https://openrouter.ai/api/v1'); }
+                  else if (val === 'huggingface') { setAiModel('meta-llama/Llama-3.2-3B-Instruct'); setAiBaseUrl('https://api-inference.huggingface.co/models'); }
                   else if (val === 'ollama') setAiModel('llama3.2');
                   else if (val === 'freeflow') setAiModel('deepseek-r1-distill-qwen-14b');
                   else if (val === 'gemini') setAiModel('gemini-1.5-flash');
@@ -421,6 +423,8 @@ export const AccountPage: React.FC = () => {
                   boxSizing: 'border-box'
                 }}
               >
+                <option value="openrouter">OpenRouter (deepseek/deepseek-r1:free)</option>
+                <option value="huggingface">Hugging Face Inference API</option>
                 <option value="mock">Deterministic Mock AI (Grounded Offline)</option>
                 <option value="ollama">Local Ollama (http://127.0.0.1:11434)</option>
                 <option value="freeflow">FreeFlow AI Gateway (http://127.0.0.1:8000/v1)</option>
