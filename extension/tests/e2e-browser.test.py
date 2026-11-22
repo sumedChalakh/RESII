@@ -32,12 +32,14 @@ def test_real_chromium_extension_e2e():
                 ]
             )
 
-            time.sleep(2)  # Allow service worker to initialize
-
-            # 2. Verify Service Worker startup
-            service_workers = browser.service_workers
-            assert len(service_workers) >= 1, "Failed to start extension service worker in Chromium"
-            sw = service_workers[0]
+            # Wait up to 6 seconds for MV3 service worker initialization
+            sw = None
+            for _ in range(12):
+                if browser.service_workers:
+                    sw = browser.service_workers[0]
+                    break
+                time.sleep(0.5)
+            assert sw is not None, "Failed to start extension service worker in Chromium"
             sw_url = sw.url
             assert "background/service-worker.js" in sw_url, f"Unexpected SW URL: {sw_url}"
             ext_id = sw_url.split("/")[2]
