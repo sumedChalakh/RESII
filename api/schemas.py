@@ -15,6 +15,11 @@ class LoginRequest(BaseModel):
     password: Optional[str] = "demo123"
     provider: Optional[str] = "email"
 
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+    name: Optional[str] = None
+
 class AuthResponse(BaseModel):
     status: str
     user: UserSession
