@@ -24,13 +24,29 @@ export class WorkdayAdapter extends BaseAdapter {
       company = this.extractCompanyFromUrl(url) || 'Enterprise Employer';
     }
 
+    const isApplyWizard = (
+      url.includes('/apply') ||
+      !!doc.querySelector('[data-automation-id="candidateApplicationPage"]') ||
+      !!doc.querySelector('[data-automation-id="createAccountPage"]') ||
+      !!doc.querySelector('input[type="password"]') ||
+      !!doc.querySelector('[data-automation-id="legalNameSection_firstName"]')
+    );
+
+    const jdEl = doc.querySelector('[data-automation-id="jobPostingDescription"], [data-automation-id="job-posting-details"], .job-description');
+    const jobDescription = (!isApplyWizard && jdEl) ? this.getCleanText(jdEl) : '';
+    const hasJobDescription = !isApplyWizard && jobDescription.length > 50;
+
     return {
       adapterName: this.name,
       title: this.getCleanText(titleEl) || 'Platform Engineer',
       company,
       location: this.getCleanText(locationEl) || 'Remote',
       url,
-      formDetected: !!this.findForm(doc)
+      formDetected: !!this.findForm(doc),
+      jobDescription,
+      hasJobDescription,
+      isDirectApplyForm: isApplyWizard || !hasJobDescription,
+      isActiveSession: true
     };
   }
 
