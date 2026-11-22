@@ -5,6 +5,8 @@ from api.ai.providers.base import BaseLLMProvider
 from api.ai.providers.freeflow import FreeFlowProvider
 from api.ai.providers.ollama import OllamaProvider
 from api.ai.providers.gemini import GeminiProvider
+from api.ai.providers.openrouter import OpenRouterProvider
+from api.ai.providers.huggingface import HuggingFaceProvider
 from api.ai.providers.mock import MockAIProvider
 
 def get_provider(config: Optional[AIProviderConfig] = None) -> BaseLLMProvider:
@@ -58,11 +60,34 @@ def get_provider(config: Optional[AIProviderConfig] = None) -> BaseLLMProvider:
             timeout_seconds=timeout
         )
 
+    elif prov_name == "openrouter":
+        return OpenRouterProvider(
+            api_key=config.api_key if config else None,
+            backup_api_key=config.api_key_backup if config else None,
+            model=model,
+            base_url=config.base_url if config else None,
+            timeout_seconds=timeout
+        )
+
+    elif prov_name in ("huggingface", "hf"):
+        return HuggingFaceProvider(
+            api_key=config.api_key if config else None,
+            backup_api_key=config.api_key_backup if config else None,
+            model=model,
+            base_url=config.base_url if config else None,
+            timeout_seconds=timeout
+        )
+
     elif prov_name == "mock":
+        from api.config import settings
+        if settings.ENVIRONMENT == "production":
+            from api.ai.providers.base import ProviderUnavailableError
+            raise ProviderUnavailableError("Mock AI provider is strictly prohibited in production environments.")
         return MockAIProvider(timeout_seconds=timeout)
 
-    # Fallback to Mock if unrecognized
-    return MockAIProvider(timeout_seconds=timeout)
+    # Invariant: Never silently substitute a mock provider for unrecognized configurations
+    from api.ai.providers.base import ProviderUnavailableError
+    raise ProviderUnavailableError(f"Requested AI provider '{prov_name}' is not supported or recognized.")
 
 
 def check_all_providers() -> Dict[str, ProviderHealthResponse]:
@@ -81,8 +106,29 @@ def check_all_providers() -> Dict[str, ProviderHealthResponse]:
     gem = GeminiProvider()
     results["gemini"] = gem.health()
 
-    # 4. Mock
-    mock = MockAIProvider()
-    results["mock"] = mock.health()
+    # 4. Mock (truthfully marked as test_only / disabled in production)
+    from api.config import settings
+    if settings.ENVIRONMENT == "production":
+        results["mock"] = ProviderHealthResponse(
+            provider="mock",
+            status="offline",
+            message="Mock AI provider is strictly disabled in production.",
+            models=[]
+        )
+    else:
+        results["mock"] = ProviderHealthResponse(
+            provider="mock",
+            status="online",
+            message="Mock AI provider available exclusively for isolated test fixtures.",
+            models=["mock-grounded-v1"]
+        )
+
+    # 5. OpenRouter
+    openrouter = OpenRouterProvider()
+    results["openrouter"] = openrouter.health()
+
+    # 6. HuggingFace
+    hf = HuggingFaceProvider()
+    results["huggingface"] = hf.health()
 
     return results
