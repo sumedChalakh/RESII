@@ -44,6 +44,19 @@ export interface ClassifiedField {
   approved: boolean;
 }
 
+export type SidebarStep = 'tailor' | 'review' | 'fill' | 'submit';
+
+export interface TailorEditItem {
+  id: string;
+  section: 'summary' | 'experience' | 'skills' | 'education';
+  title?: string;
+  subtitle?: string;
+  originalText: string;
+  tailoredText: string;
+  rationale: string;
+  selected: boolean;
+}
+
 export interface JobContext {
   company: string;
   title: string;
@@ -51,6 +64,10 @@ export interface JobContext {
   url: string;
   adapterName: string;
   formDetected: boolean;
+  jobDescription?: string;
+  hasJobDescription?: boolean;
+  isDirectApplyForm?: boolean;
+  isActiveSession?: boolean;
 }
 
 export interface ResumeOption {
@@ -61,6 +78,7 @@ export interface ResumeOption {
   is_primary: boolean;
   download_url_pdf: string;
   download_url_docx: string;
+  document?: any;
 }
 
 export interface CandidateProfile {
@@ -109,4 +127,31 @@ export interface TrackApplicationPayload {
   salary_range?: string;
   notes?: string;
   form_provider?: string;
+}
+
+export interface TabStateRecord {
+  tabId: number;
+  url: string;
+  origin: string;
+  isSupported: boolean;
+  jobContext: JobContext | null;
+  scanId: string | null;
+  lastUpdated: number;
+}
+
+export interface AutofillResultItem {
+  fieldId: string;
+  status: 'filled' | 'skipped' | 'failed';
+  verifiedValue?: string;
+  reason?: string;
+}
+
+export interface AutofillReport {
+  filled: number;
+  skipped: number;
+  verified: number;
+  items: AutofillResultItem[];
+  resumeAttached?: boolean;
+  resumeFilename?: string;
+  resumeError?: string;
 }
