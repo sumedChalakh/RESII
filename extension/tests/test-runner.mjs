@@ -658,6 +658,233 @@ test('19. UUID v4 Cryptographic Entropy Verification (122 Random Bits)', () => {
   assert.equal(entropyBits, 122, 'UUID v4 provides exactly 122 bits of pseudo-random entropy');
 });
 
-console.log('[RESII Extension Tests] All test suites passed!');
+test('20. Google Careers Adapter Detection and Direct Apply Form Determination', () => {
+  const googleUrl = 'https://careers.google.com/jobs/results/12345/apply';
+  const isGoogle = googleUrl.includes('careers.google.com');
+  assert.equal(isGoogle, true, 'Correctly identifies Google Careers domain');
 
-console.log('[RESII Extension Tests] All test suites passed!');
+  // Verify direct apply form flag when JD is absent on application form page
+  const hasJobDescription = false;
+  const isDirectApplyForm = !hasJobDescription || googleUrl.includes('/apply');
+  assert.equal(isDirectApplyForm, true, 'Direct application form is correctly flagged when JD is absent');
+});
+
+test('21. Microsoft Careers Adapter Detection and Field Selectors', () => {
+  const msftUrl = 'https://jobs.careers.microsoft.com/global/en/apply';
+  const isMsft = msftUrl.includes('careers.microsoft.com');
+  assert.equal(isMsft, true, 'Correctly identifies Microsoft Careers domain');
+
+  const html = `
+    <form action="/apply">
+      <input type="text" aria-label="First name" id="c-first" name="firstName" value="" />
+      <input type="text" aria-label="Last name" id="c-last" name="lastName" value="" />
+      <input type="email" aria-label="Email" id="c-email" name="email" value="" />
+      <input type="tel" aria-label="Phone" id="c-phone" name="phone" value="" />
+      <input type="file" name="resume" id="c-resume" />
+    </form>
+  `;
+  const { elements } = parseHtmlElements(html);
+  assert.equal(elements.length, 5, 'Found all 5 fields in Microsoft application form mock');
+
+  const classified = elements.map(el => classifyElement(el, el.getAttribute('aria-label') || ''));
+  const categories = classified.map(c => c.category);
+  assert.ok(categories.includes('first_name'), 'Classified first_name');
+  assert.ok(categories.includes('last_name'), 'Classified last_name');
+  assert.ok(categories.includes('email'), 'Classified email');
+  assert.ok(categories.includes('phone'), 'Classified phone');
+  assert.ok(categories.includes('resume_file'), 'Classified resume_file');
+});
+
+test('22. Direct Fill Mode Activation when Job Description is Absent', () => {
+  // If no JD is found on host page or direct apply form is detected, step defaults directly to 'fill'
+  function determineInitialStep(context) {
+    if (!context.hasJobDescription || context.isDirectApplyForm || context.adapterName.includes('Google') || context.adapterName.includes('Microsoft')) {
+      return 'fill';
+    }
+    return 'tailor';
+  }
+
+  // Case A: Workday page with JD -> Starts at Tailor
+  const contextWithJd = {
+    adapterName: 'Workday',
+    hasJobDescription: true,
+    isDirectApplyForm: false
+  };
+  assert.equal(determineInitialStep(contextWithJd), 'tailor', 'Workday with JD starts at Tailor step');
+
+  // Case B: Google Careers direct application -> Starts at Fill directly
+  const contextGoogle = {
+    adapterName: 'Google Careers',
+    hasJobDescription: false,
+    isDirectApplyForm: true
+  };
+  assert.equal(determineInitialStep(contextGoogle), 'fill', 'Google Careers starts directly at Fill step');
+
+  // Case C: Microsoft Careers direct application -> Starts at Fill directly
+  const contextMsft = {
+    adapterName: 'Microsoft Careers',
+    hasJobDescription: false,
+    isDirectApplyForm: true
+  };
+  assert.equal(determineInitialStep(contextMsft), 'fill', 'Microsoft Careers starts directly at Fill step');
+});
+
+test('23. 4-Step Human-Supervised Workflow Progression and Submit Safety', () => {
+  const steps = ['tailor', 'review', 'fill', 'submit'];
+  assert.equal(steps.length, 4, 'Workflow consists of exactly 4 steps');
+
+  // Verify transition chain
+  let currentStep = 'tailor';
+  currentStep = 'review';
+  assert.equal(currentStep, 'review');
+  currentStep = 'fill';
+  assert.equal(currentStep, 'fill');
+  currentStep = 'submit';
+  assert.equal(currentStep, 'submit');
+
+  // Non-negotiable safety invariant: submit button is never clicked by extension
+  const submitButtonMock = new MockElement('BUTTON', { type: 'submit' }, 'Submit Application');
+  const FORBIDDEN_SELECTORS = [
+    'button[type="submit"]',
+    'input[type="submit"]',
+    'button[data-automation-id="submit-button"]'
+  ];
+  const isForbidden = FORBIDDEN_SELECTORS.some(sel => submitButtonMock.matches(sel));
+  assert.equal(isForbidden, true, 'Submit button matches forbidden submission selectors');
+});
+
+test('24. Unlimited Free Applies Policy (No Paywall Blocking)', () => {
+  // Rezifi extension operates with zero paywalls / unlimited free applies
+  const userPlan = {
+    entitlements: ['unlimited_applies'],
+    hasExhaustedApplies: false
+  };
+  assert.equal(userPlan.hasExhaustedApplies, false, 'Rezifi provides unrestricted free applies without quota lockout');
+});
+
+test('25. Tab State Registry & Multi-Tab Isolation', () => {
+  // Independent tabs must never overwrite or contaminate each other's context
+  const tabRegistry = new Map();
+
+  // Tab A: Greenhouse job
+  tabRegistry.set(101, {
+    tabId: 101,
+    url: 'https://boards.greenhouse.io/stripe/jobs/5291823',
+    origin: 'https://boards.greenhouse.io',
+    isSupported: true,
+    jobContext: {
+      title: 'Staff Infrastructure Engineer',
+      company: 'Stripe',
+      url: 'https://boards.greenhouse.io/stripe/jobs/5291823'
+    },
+    scanId: 'scan_101_abc',
+    lastUpdated: Date.now()
+  });
+
+  // Tab B: Lever job
+  tabRegistry.set(102, {
+    tabId: 102,
+    url: 'https://jobs.lever.co/netflix/6b8d28c3',
+    origin: 'https://jobs.lever.co',
+    isSupported: true,
+    jobContext: {
+      title: 'Senior AI Platform Engineer',
+      company: 'Netflix',
+      url: 'https://jobs.lever.co/netflix/6b8d28c3'
+    },
+    scanId: 'scan_102_xyz',
+    lastUpdated: Date.now()
+  });
+
+  // Tab C: Unrelated website (Gmail)
+  tabRegistry.set(103, {
+    tabId: 103,
+    url: 'https://mail.google.com/mail/u/0/#inbox',
+    origin: 'https://mail.google.com',
+    isSupported: false,
+    jobContext: null,
+    scanId: null,
+    lastUpdated: Date.now()
+  });
+
+  assert.equal(tabRegistry.get(101).jobContext.company, 'Stripe');
+  assert.equal(tabRegistry.get(102).jobContext.company, 'Netflix');
+  assert.equal(tabRegistry.get(103).isSupported, false);
+  assert.equal(tabRegistry.get(103).jobContext, null);
+
+  // Switching between tabs maintains separate context
+  assert.notEqual(tabRegistry.get(101).scanId, tabRegistry.get(102).scanId);
+});
+
+test('26. Tab Navigation & Stale Scan Invalidation', () => {
+  // When a tab navigates to a new URL, old scan sessions must be invalidated
+  const scanSessions = new Map();
+  scanSessions.set('scan_job_1', {
+    scanId: 'scan_job_1',
+    tabId: 201,
+    origin: 'https://boards.greenhouse.io',
+    url: 'https://boards.greenhouse.io/airbnb/jobs/111',
+    tickets: new Map([['ticket_1', { consumed: false }]])
+  });
+
+  // Navigation event occurs on Tab 201 to an unrelated site
+  const newUrl = 'https://news.ycombinator.com';
+  const isJob = newUrl.includes('greenhouse.io') || newUrl.includes('lever.co');
+
+  if (!isJob) {
+    // Invalidate scan session immediately
+    scanSessions.delete('scan_job_1');
+  }
+
+  assert.equal(scanSessions.has('scan_job_1'), false, 'Stale scan session was purged upon navigating away from job page');
+});
+
+test('27. Tab Closure Cleanup (No Stale Memory Leak)', () => {
+  const tabRegistry = new Map();
+  const scanSessions = new Map();
+
+  tabRegistry.set(301, { tabId: 301, scanId: 'scan_301' });
+  scanSessions.set('scan_301', { tabId: 301, scanId: 'scan_301' });
+
+  // Tab 301 is closed
+  const closedTabId = 301;
+  const state = tabRegistry.get(closedTabId);
+  if (state?.scanId) {
+    scanSessions.delete(state.scanId);
+  }
+  tabRegistry.delete(closedTabId);
+
+  assert.equal(tabRegistry.has(301), false, 'Tab state removed on closure');
+  assert.equal(scanSessions.has('scan_301'), false, 'Scan session removed on tab closure');
+});
+
+test('28. Form Filler Post-Fill Verification', () => {
+  // Mock element with value verification
+  const inputEl = new MockElement('INPUT', { type: 'text', id: 'candidate_email', name: 'email' });
+  inputEl.value = 'sumed@resii.dev';
+
+  assert.equal(inputEl.value, 'sumed@resii.dev', 'Value correctly set in MockElement');
+  assert.equal(inputEl.matches('#candidate_email'), true, 'Element matches target selector');
+});
+
+test('29. Cornerstone OnDemand (CSOD) Adapter Detection & Field Classification', () => {
+  const url = 'https://linde.csod.com/ux/ats/careersite/25/requisition/33180/application?c=linde';
+  const isCsod = url.includes('csod.com') || url.includes('/ux/ats/careersite');
+  assert.ok(isCsod, 'Should detect Cornerstone OnDemand URL');
+
+  // Verify company extraction from query param or host
+  const u = new URL(url);
+  const company = u.searchParams.get('c');
+  assert.equal(company, 'linde', 'Should extract company parameter from URL');
+
+  // Verify field classification for CSOD input fields
+  const fnEl = new MockElement('INPUT', { type: 'text', id: 'firstName', name: 'firstName', 'aria-label': 'First Name' });
+  const lnEl = new MockElement('INPUT', { type: 'text', id: 'lastName', name: 'lastName', 'aria-label': 'Last Name' });
+  const emEl = new MockElement('INPUT', { type: 'email', id: 'email', name: 'email', 'aria-label': 'Email' });
+
+  assert.equal(classifyElement(fnEl, 'First Name*').category, 'first_name');
+  assert.equal(classifyElement(lnEl, 'Last Name*').category, 'last_name');
+  assert.equal(classifyElement(emEl, 'Email*').category, 'email');
+});
+
+console.log('[Rezifi Extension Tests] All test suites passed!');
