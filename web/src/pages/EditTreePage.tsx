@@ -13,7 +13,15 @@ import {
   Trash2, 
   ArrowUp, 
   ArrowDown, 
-  ExternalLink 
+  ExternalLink,
+  RefreshCw,
+  Briefcase,
+  ChevronDown,
+  User,
+  Mail,
+  Phone,
+  MapPin,
+  Globe
 } from 'lucide-react';
 
 interface ResumeLine {
@@ -48,6 +56,11 @@ export const EditTreePage: React.FC = () => {
   const [pageCount, setPageCount] = useState(1);
   const [tightened, setTightened] = useState(true);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [previewMode, setPreviewMode] = useState<'original' | 'tree'>('original');
+  const [aiLoadingLineId, setAiLoadingLineId] = useState<string | null>(null);
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const [previewKey, setPreviewKey] = useState<number>(Date.now());
+  const [refreshingPreview, setRefreshingPreview] = useState(false);
 
   // Resume header
   const [header, setHeader] = useState<{
@@ -139,19 +152,102 @@ export const EditTreePage: React.FC = () => {
         if (data.ats_score) {
           setAtsScore(data.ats_score);
         }
+        if (data.page_count || data.layout?.page_count) {
+          setPageCount(data.page_count || data.layout?.page_count || 1);
+        }
       })
       .catch((err) => {
         console.warn('Using seeded local tree:', err);
       });
   }, [resumeId]);
 
-  const applyRewrite = (secIdx: number, blkIdx: number, lineIdx: number, newText: string) => {
+  const saveDocumentToServer = async (docToSave: { header: any; sections: any }, forceVersion?: number) => {
+    setSaving(true);
+    setSaveSuccess(false);
+    const verToSend = forceVersion !== undefined ? forceVersion : version;
+
+    try {
+      const res = await fetch(`/api/v3/resumes/${resumeId || 'primary'}/document`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Resume-Version': verToSend.toString()
+        },
+        body: JSON.stringify({
+          version: verToSend,
+          document: docToSave
+        })
+      });
+
+      if (res.status === 409) {
+        const conflict = await res.json();
+        setConflictDetail(conflict.detail);
+        setShowConflictModal(true);
+        setSaving(false);
+        return false;
+      }
+
+      if (res.ok) {
+        const data = await res.json();
+        setVersion(data.version);
+        setAtsScore(data.ats_score);
+        if (data.layout) {
+          setPageCount(data.layout.page_count);
+          setTightened(data.layout.tightened);
+        }
+        setSaveSuccess(true);
+        dispatch(addXp({ amount: 15, reason: 'Saved Resume Version' }));
+        setTimeout(() => setSaveSuccess(false), 2500);
+        return true;
+      }
+    } catch (err) {
+      console.error('Save error:', err);
+    } finally {
+      setSaving(false);
+    }
+    return false;
+  };
+
+  const applyRewrite = async (secIdx: number, blkIdx: number, lineIdx: number, newText: string) => {
     const updated = JSON.parse(JSON.stringify(sections));
     updated[secIdx].blocks[blkIdx].lines[lineIdx].text = newText;
     delete updated[secIdx].blocks[blkIdx].lines[lineIdx].rewrite;
     setSections(updated);
     setAtsScore((prev) => Math.min(99, prev + 2));
     dispatch(addXp({ amount: 20, reason: 'Applied ATS Bullet Rewrite' }));
+    // Automatically save to backend so the rewrite is immediately persisted!
+    await saveDocumentToServer({ header, sections: updated });
+    // Switch to live updated preview so the user sees the changes on their resume sheet
+    setPreviewMode('tree');
+  };
+
+  const requestAiRewrite = async (secIdx: number, blkIdx: number, lineIdx: number, bulletText: string) => {
+    const line = sections[secIdx]?.blocks[blkIdx]?.lines[lineIdx];
+    if (!line || !bulletText.trim()) return;
+    setAiLoadingLineId(line.id);
+    try {
+      const res = await fetch('/api/v3/resumes/ai-rewrite-bullet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bullet_text: bulletText,
+          target_role: header.title || 'AI / Machine Learning Engineer',
+          company: sections[secIdx]?.blocks[blkIdx]?.company || ''
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.rewrite) {
+          const updated = JSON.parse(JSON.stringify(sections));
+          updated[secIdx].blocks[blkIdx].lines[lineIdx].rewrite = data.rewrite;
+          setSections(updated);
+        }
+      }
+    } catch (err) {
+      console.error('AI rewrite error:', err);
+    } finally {
+      setAiLoadingLineId(null);
+    }
   };
 
   const handleUpdateLine = (secIdx: number, blkIdx: number, lineIdx: number, text: string) => {
@@ -170,56 +266,20 @@ export const EditTreePage: React.FC = () => {
     const updated = [...sections];
     updated[secIdx].blocks[blkIdx].lines.push({
       id: `l_${Date.now()}`,
-      text: 'Developed scalable services resulting in measurable efficiency improvements.',
-      rewrite: 'Spearheaded end-to-end service optimization, enhancing query throughput by 35%.'
+      text: ''
     });
     setSections(updated);
   };
 
   const handleSave = async (forceVersion?: number) => {
-    setSaving(true);
-    setSaveSuccess(false);
-    const verToSend = forceVersion !== undefined ? forceVersion : version;
+    await saveDocumentToServer({ header, sections }, forceVersion);
+  };
 
-    try {
-      const res = await fetch(`/api/v3/resumes/${resumeId || 'primary'}/document`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Resume-Version': verToSend.toString()
-        },
-        body: JSON.stringify({
-          version: verToSend,
-          document: { header, sections }
-        })
-      });
-
-      if (res.status === 409) {
-        // Concurrency conflict detected!
-        const conflict = await res.json();
-        setConflictDetail(conflict.detail);
-        setShowConflictModal(true);
-        setSaving(false);
-        return;
-      }
-
-      if (res.ok) {
-        const data = await res.json();
-        setVersion(data.version);
-        setAtsScore(data.ats_score);
-        if (data.layout) {
-          setPageCount(data.layout.page_count);
-          setTightened(data.layout.tightened);
-        }
-        setSaveSuccess(true);
-        dispatch(addXp({ amount: 15, reason: 'Saved Resume Version' }));
-        setTimeout(() => setSaveSuccess(false), 2500);
-      }
-    } catch (err) {
-      console.error('Save error:', err);
-    } finally {
-      setSaving(false);
-    }
+  const handleRefreshPreview = async () => {
+    setRefreshingPreview(true);
+    await saveDocumentToServer({ header, sections });
+    setPreviewKey(Date.now());
+    setTimeout(() => setRefreshingPreview(false), 400);
   };
 
   // Simulate remote update to trigger optimistic concurrency conflict modal
@@ -261,6 +321,25 @@ export const EditTreePage: React.FC = () => {
               }}>
                 v{version}
               </span>
+              <Link
+                to="/jobs"
+                style={{
+                  background: 'rgba(16, 185, 129, 0.1)',
+                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                  borderRadius: 'var(--radius-full)',
+                  padding: '2px 8px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: '#059669',
+                  textDecoration: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4
+                }}
+              >
+                <Briefcase size={11} />
+                <span>Jobs (20k)</span>
+              </Link>
             </div>
             <div style={{ fontSize: 12, color: 'var(--color-muted)', marginTop: 2 }}>
               Candidate: <strong>{header.name}</strong> • Page budget: {pageCount} page • Tightened: {tightened ? 'Yes' : 'No'}
@@ -285,49 +364,161 @@ export const EditTreePage: React.FC = () => {
             <span>{atsScore} ATS SCORE</span>
           </div>
 
-          <a
-            href={`/api/v3/resumes/${resumeId || 'primary'}/export/pdf`}
-            download
+          {/* Live [↻ Update preview] button */}
+          <button
+            type="button"
+            onClick={handleRefreshPreview}
+            disabled={refreshingPreview}
+            title="Saves document and refreshes preview sheet"
             style={{
-              background: 'var(--color-surface-card)',
-              color: 'var(--color-ink)',
-              border: '1px solid var(--color-border)',
+              background: '#0e6245',
+              color: '#ffffff',
+              border: 'none',
               borderRadius: 'var(--radius-md)',
-              padding: '8px 12px',
+              padding: '8px 14px',
               fontSize: 13,
-              fontWeight: 600,
-              cursor: 'pointer',
+              fontWeight: 700,
+              cursor: refreshingPreview ? 'wait' : 'pointer',
               display: 'flex',
               alignItems: 'center',
               gap: 6,
-              textDecoration: 'none'
+              boxShadow: '0 2px 5px rgba(14, 98, 69, 0.25)',
+              transition: 'background 150ms ease'
             }}
           >
-            <Download size={14} />
-            <span>Export PDF</span>
-          </a>
+            <RefreshCw size={14} className={refreshingPreview ? 'spin' : ''} />
+            <span>{refreshingPreview ? 'Updating…' : 'Update preview'}</span>
+          </button>
 
-          <a
-            href={`/api/v3/resumes/${resumeId || 'primary'}/export/docx`}
-            download
-            style={{
-              background: 'var(--color-surface-card)',
-              color: 'var(--color-ink)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              padding: '8px 12px',
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              textDecoration: 'none'
-            }}
-          >
-            <Download size={14} />
-            <span>Export Word</span>
-          </a>
+          {/* Unified Download Dropdown */}
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              onClick={() => setDownloadOpen(!downloadOpen)}
+              style={{
+                background: 'var(--color-surface-card)',
+                color: 'var(--color-ink)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                padding: '8px 14px',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6
+              }}
+            >
+              <Download size={14} />
+              <span>Download</span>
+              <ChevronDown size={14} />
+            </button>
+            {downloadOpen && (
+              <div style={{
+                position: 'absolute',
+                right: 0,
+                top: '100%',
+                marginTop: 6,
+                background: '#ffffff',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                boxShadow: '0 10px 25px rgba(0,0,0,0.1)',
+                width: 250,
+                zIndex: 60,
+                display: 'flex',
+                flexDirection: 'column',
+                padding: 6
+              }}>
+                <a
+                  href={`/api/v3/resumes/${resumeId || 'primary'}/export/pdf`}
+                  download
+                  onClick={() => setDownloadOpen(false)}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: 'var(--color-ink)',
+                    textDecoration: 'none',
+                    borderRadius: 'var(--radius-sm)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                  }}
+                >
+                  <span>PDF (Print replica document)</span>
+                  <span style={{ fontSize: 11, color: 'var(--color-muted)' }}>.pdf</span>
+                </a>
+                <a
+                  href={`/api/v3/resumes/${resumeId || 'primary'}/export/docx`}
+                  download
+                  onClick={() => setDownloadOpen(false)}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: 'var(--color-ink)',
+                    textDecoration: 'none',
+                    borderRadius: 'var(--radius-sm)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                  }}
+                >
+                  <span>DOCX (Word format for ATS)</span>
+                  <span style={{ fontSize: 11, color: 'var(--color-muted)' }}>.docx</span>
+                </a>
+                <Link
+                  to="/v3/resumes/primary/google-docs"
+                  onClick={() => setDownloadOpen(false)}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: 'var(--color-ink)',
+                    textDecoration: 'none',
+                    borderRadius: 'var(--radius-sm)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                  }}
+                >
+                  <span>Google Docs</span>
+                  <ExternalLink size={12} color="var(--color-muted)" />
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDownloadOpen(false);
+                    const plain = `${header.name}\n${header.title}\n${header.email} • ${header.phone} • ${header.location}\n\n` +
+                      sections.map(s => `${s.title.toUpperCase()}\n` + s.blocks.map(b => `${b.role} - ${b.company} (${b.period})\n` + b.lines.map(l => `• ${l.text}`).join('\n')).join('\n\n')).join('\n\n');
+                    const blob = new Blob([plain], { type: 'text/plain' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${header.name.replace(/\s+/g, '_')}_Resume.txt`;
+                    a.click();
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: '8px 12px',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: 'var(--color-ink)',
+                    cursor: 'pointer',
+                    borderRadius: 'var(--radius-sm)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    textAlign: 'left'
+                  }}
+                >
+                  <span>Raw Plain Text</span>
+                  <span style={{ fontSize: 11, color: 'var(--color-muted)' }}>.txt</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           <button
             onClick={triggerConflictSimulation}
@@ -377,6 +568,141 @@ export const EditTreePage: React.FC = () => {
       }}>
         {/* Left: Tree Editor */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {/* Top: Dedicated Contact & Profile Header Card */}
+          <div style={{
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-lg)',
+            padding: 20
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 16,
+              paddingBottom: 8,
+              borderBottom: '1px solid var(--color-border-subtle)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <User size={16} color="var(--color-primary)" />
+                <span style={{ fontSize: 16, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Contact & Profile Details
+                </span>
+              </div>
+              <span style={{ fontSize: 12, color: 'var(--color-faint)', fontWeight: 600 }}>
+                Header Info
+              </span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-muted)', marginBottom: 4 }}>
+                  Full Candidate Name
+                </label>
+                <input
+                  type="text"
+                  value={header.name}
+                  onChange={(e) => setHeader({ ...header, name: e.target.value })}
+                  placeholder="e.g. Sumed Chalakh"
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-surface-elevated)',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-muted)', marginBottom: 4 }}>
+                  Headline / Target Role
+                </label>
+                <input
+                  type="text"
+                  value={header.title}
+                  onChange={(e) => setHeader({ ...header, title: e.target.value })}
+                  placeholder="e.g. Data Scientist | AI/ML Engineer"
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-surface-elevated)',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-muted)', marginBottom: 4 }}>
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  value={header.email}
+                  onChange={(e) => setHeader({ ...header, email: e.target.value })}
+                  placeholder="email@example.com"
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-surface-elevated)',
+                    fontSize: 13,
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-muted)', marginBottom: 4 }}>
+                  Phone Number
+                </label>
+                <input
+                  type="text"
+                  value={header.phone}
+                  onChange={(e) => setHeader({ ...header, phone: e.target.value })}
+                  placeholder="+91 8329935523"
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-surface-elevated)',
+                    fontSize: 13,
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-muted)', marginBottom: 4 }}>
+                  Location
+                </label>
+                <input
+                  type="text"
+                  value={header.location}
+                  onChange={(e) => setHeader({ ...header, location: e.target.value })}
+                  placeholder="Nagpur, Maharashtra, India"
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-surface-elevated)',
+                    fontSize: 13,
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+            </div>
+          </div>
           {sections.map((sec, secIdx) => (
             <div
               key={sec.id}
@@ -414,48 +740,116 @@ export const EditTreePage: React.FC = () => {
                     <span style={{ fontSize: 12, color: 'var(--color-faint)' }}>{blk.period}</span>
                   </div>
 
-                  {/* Lines List with Suggested Rewrites */}
+                  {/* Lines List with Suggested Rewrites & Line Budget */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {blk.lines.map((line, lineIdx) => (
-                      <div
-                        key={line.id}
-                        style={{
-                          background: 'var(--color-surface-elevated)',
-                          border: '1px solid var(--color-border)',
-                          borderRadius: 'var(--radius-md)',
-                          padding: 12
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                          <span style={{ color: 'var(--color-primary)', fontWeight: 700, marginTop: 2 }}>•</span>
-                          <input
-                            type="text"
-                            value={line.text}
-                            onChange={(e) => handleUpdateLine(secIdx, blkIdx, lineIdx, e.target.value)}
-                            style={{
-                              flex: 1,
-                              border: 'none',
-                              background: 'transparent',
-                              fontSize: 14,
-                              color: 'var(--color-ink)',
-                              outline: 'none',
-                              lineHeight: 1.4
-                            }}
-                          />
-                          <button
-                            onClick={() => handleDeleteLine(secIdx, blkIdx, lineIdx)}
-                            title="Delete bullet"
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              color: 'var(--color-faint)',
-                              cursor: 'pointer',
-                              padding: 2
-                            }}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
+                    {blk.lines.map((line, lineIdx) => {
+                      const charCount = (line.text || '').length;
+                      const lineCount = Math.max(1, Math.ceil(charCount / 85));
+                      const isOverflowEdge = (charCount > 85 && charCount <= 110) || (charCount > 170 && charCount <= 200);
+
+                      return (
+                        <div
+                          key={line.id}
+                          style={{
+                            background: 'var(--color-surface-elevated)',
+                            border: '1px solid var(--color-border)',
+                            borderRadius: 'var(--radius-md)',
+                            padding: 12
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                            <span style={{ color: 'var(--color-primary)', fontWeight: 700, marginTop: 6 }}>•</span>
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <textarea
+                                value={line.text}
+                                onChange={(e) => handleUpdateLine(secIdx, blkIdx, lineIdx, e.target.value)}
+                                rows={Math.max(2, Math.ceil(charCount / 65))}
+                                style={{
+                                  width: '100%',
+                                  border: '1px solid var(--color-border)',
+                                  borderRadius: 'var(--radius-sm)',
+                                  background: '#ffffff',
+                                  fontSize: 13,
+                                  color: 'var(--color-ink)',
+                                  padding: '8px 10px',
+                                  outline: 'none',
+                                  lineHeight: 1.45,
+                                  resize: 'vertical',
+                                  fontFamily: 'inherit',
+                                  boxSizing: 'border-box'
+                                }}
+                                placeholder="Enter or edit bullet statement..."
+                              />
+                              {isOverflowEdge && (
+                                <div style={{
+                                  fontSize: 11,
+                                  color: '#b45309',
+                                  background: '#fef3c7',
+                                  border: '1px solid #fde68a',
+                                  padding: '4px 8px',
+                                  borderRadius: 'var(--radius-sm)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 6
+                                }}>
+                                  <AlertCircle size={12} />
+                                  <span>Wraps to {lineCount} lines in PDF — shorten a few words to save 1 line</span>
+                                </div>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
+                              <span
+                                title={`Approximately ${lineCount} line${lineCount > 1 ? 's' : ''} on standard PDF format`}
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  padding: '2px 6px',
+                                  borderRadius: 'var(--radius-full)',
+                                  background: lineCount === 1 ? 'rgba(16, 185, 129, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+                                  color: lineCount === 1 ? '#059669' : '#d97706',
+                                  border: `1px solid ${lineCount === 1 ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`
+                                }}
+                              >
+                                {lineCount}L
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => requestAiRewrite(secIdx, blkIdx, lineIdx, line.text)}
+                                disabled={aiLoadingLineId === line.id || !line.text.trim()}
+                                title="Generate ATS bullet rewrite with OpenRouter AI"
+                                style={{
+                                  background: 'rgba(14, 165, 233, 0.1)',
+                                  border: '1px solid #bae6fd',
+                                  color: '#0284c7',
+                                  borderRadius: 'var(--radius-sm)',
+                                  padding: '4px 8px',
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  whiteSpace: 'nowrap'
+                                }}
+                              >
+                                <Sparkles size={12} />
+                                <span>{aiLoadingLineId === line.id ? 'Writing…' : 'AI Rewrite'}</span>
+                              </button>
+                              <button
+                                onClick={() => handleDeleteLine(secIdx, blkIdx, lineIdx)}
+                                title="Delete bullet"
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  color: 'var(--color-faint)',
+                                  cursor: 'pointer',
+                                  padding: 2
+                                }}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
 
                         {line.rewrite && (
                           <div style={{
@@ -501,7 +895,8 @@ export const EditTreePage: React.FC = () => {
                           </div>
                         )}
                       </div>
-                    ))}
+                    );
+                  })}
 
                     <button
                       onClick={() => handleAddLine(secIdx, blkIdx)}
@@ -544,27 +939,80 @@ export const EditTreePage: React.FC = () => {
           flexDirection: 'column',
           gap: 16
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-muted)' }}>
-              A4 Sheet Preview ({pageCount} Page Budget)
-            </span>
-            <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                type="button"
+                onClick={() => setPreviewMode('original')}
+                style={{
+                  background: previewMode === 'original' ? '#0e6245' : 'var(--color-surface-card)',
+                  color: previewMode === 'original' ? '#ffffff' : 'var(--color-text)',
+                  border: '1px solid var(--color-border)',
+                  padding: '5px 10px',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                Original Template ({pageCount}P)
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewMode('tree')}
+                style={{
+                  background: previewMode === 'tree' ? '#0e6245' : 'var(--color-surface-card)',
+                  color: previewMode === 'tree' ? '#ffffff' : 'var(--color-text)',
+                  border: '1px solid var(--color-border)',
+                  padding: '5px 10px',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                Live Edited Resume ({pageCount}P)
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={handleRefreshPreview}
+                disabled={refreshingPreview}
+                title="Saves document and refreshes preview sheet"
+                style={{
+                  background: '#0e6245',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '5px 10px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: refreshingPreview ? 'wait' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4
+                }}
+              >
+                <RefreshCw size={11} className={refreshingPreview ? 'spin' : ''} />
+                <span>{refreshingPreview ? 'Updating…' : 'Update preview'}</span>
+              </button>
               <Link
                 to="/v3/resumes/primary/google-docs"
                 title="Edit in Google Docs"
                 style={{
                   background: 'var(--color-surface-card)',
                   border: '1px solid var(--color-border)',
-                  padding: '6px 10px',
+                  padding: '5px 8px',
                   borderRadius: 'var(--radius-sm)',
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: 600,
                   display: 'flex',
                   alignItems: 'center',
                   gap: 4
                 }}
               >
-                <ExternalLink size={12} />
+                <ExternalLink size={11} />
                 <span>Docs</span>
               </Link>
               <a
@@ -574,9 +1022,9 @@ export const EditTreePage: React.FC = () => {
                 style={{
                   background: 'var(--color-surface-card)',
                   border: '1px solid var(--color-border)',
-                  padding: '6px 10px',
+                  padding: '5px 8px',
                   borderRadius: 'var(--radius-sm)',
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: 600,
                   display: 'flex',
                   alignItems: 'center',
@@ -585,7 +1033,7 @@ export const EditTreePage: React.FC = () => {
                   textDecoration: 'none'
                 }}
               >
-                <Download size={12} />
+                <Download size={11} />
                 <span>PDF</span>
               </a>
             </div>
@@ -597,36 +1045,51 @@ export const EditTreePage: React.FC = () => {
             border: '1px solid var(--color-border)',
             borderRadius: 'var(--radius-sm)',
             boxShadow: '0 4px 20px rgba(0,0,0,0.06)',
-            padding: 24,
-            fontSize: 11,
-            color: '#1a1d1e',
-            lineHeight: 1.45
+            overflow: 'hidden',
+            minHeight: '750px',
+            position: 'relative'
           }}>
-            <div style={{ textAlign: 'center', marginBottom: 14 }}>
-              <div style={{ fontSize: 16, fontWeight: 800 }}>{header.name.toUpperCase()}</div>
-              <div style={{ color: '#555', fontSize: 10 }}>
-                {[header.location, header.email, header.phone, ...header.links].filter(Boolean).join(' • ')}
-              </div>
-            </div>
-
-            {sections.map((s) => (
-              <div key={s.id} style={{ marginBottom: 12 }}>
-                <div style={{ borderBottom: '1px solid #1a1d1e', fontWeight: 800, fontSize: 10, letterSpacing: '0.06em', marginBottom: 4 }}>
-                  {s.title.toUpperCase()}
+            {previewMode === 'original' ? (
+              <iframe
+                key={previewKey}
+                src={`/api/v3/resumes/${resumeId || 'primary'}/raw?t=${previewKey}#toolbar=0&navpanes=0&scrollbar=0`}
+                style={{
+                  width: '100%',
+                  height: '750px',
+                  border: 'none',
+                  background: '#ffffff'
+                }}
+                title="Exact Original Template Preview"
+              />
+            ) : (
+              <div style={{ padding: 24, fontSize: 11, color: '#1a1d1e', lineHeight: 1.45 }}>
+                <div style={{ textAlign: 'center', marginBottom: 14 }}>
+                  <div style={{ fontSize: 16, fontWeight: 800 }}>{header.name.toUpperCase()}</div>
+                  <div style={{ color: '#555', fontSize: 10 }}>
+                    {[header.location, header.email, header.phone, ...header.links].filter(Boolean).join(' • ')}
+                  </div>
                 </div>
-                {s.blocks.map((b) => (
-                  <div key={b.id} style={{ marginBottom: 6 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 10 }}>
-                      <span>{b.role} — {b.company}</span>
-                      <span>{b.period}</span>
+
+                {sections.map((s) => (
+                  <div key={s.id} style={{ marginBottom: 12 }}>
+                    <div style={{ borderBottom: '1px solid #1a1d1e', fontWeight: 800, fontSize: 10, letterSpacing: '0.06em', marginBottom: 4 }}>
+                      {s.title.toUpperCase()}
                     </div>
-                    {b.lines.map((l, i) => (
-                      <div key={i} style={{ fontSize: 10, color: '#333', marginLeft: 6 }}>• {l.text}</div>
+                    {s.blocks.map((b) => (
+                      <div key={b.id} style={{ marginBottom: 6 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 10 }}>
+                          <span>{b.role} — {b.company}</span>
+                          <span>{b.period}</span>
+                        </div>
+                        {b.lines.map((l, i) => (
+                          <div key={i} style={{ fontSize: 10, color: '#333', marginLeft: 6 }}>• {l.text}</div>
+                        ))}
+                      </div>
                     ))}
                   </div>
                 ))}
               </div>
-            ))}
+            )}
           </div>
         </div>
       </div>
