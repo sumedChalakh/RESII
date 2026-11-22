@@ -1,5 +1,5 @@
 import { apiClient } from './api-client';
-import { ExtensionState, TrackApplicationPayload } from '../shared/types';
+import { ExtensionState, TrackApplicationPayload, TabStateRecord } from '../shared/types';
 import { ExtensionMessage } from '../shared/messages';
 
 let currentState: ExtensionState = {
@@ -9,7 +9,13 @@ let currentState: ExtensionState = {
 
 // Initialize state from storage on startup
 chrome.storage?.local?.get(['resii_token', 'resii_user', 'resii_profile', 'resii_facts', 'resii_resumes'], (data) => {
-  if (data.resii_token) {
+  // Evict legacy demo user and re-pair with authentic candidate account (Sumed Chalakh)
+  if (data?.resii_user?.email === 'demo@resii.com') {
+    chrome.storage?.local?.clear();
+    data = {};
+  }
+
+  if (data?.resii_token && data?.resii_user?.email !== 'demo@resii.com') {
     apiClient.setToken(data.resii_token);
     currentState = {
       isConnected: true,
@@ -21,7 +27,171 @@ chrome.storage?.local?.get(['resii_token', 'resii_user', 'resii_profile', 'resii
     };
     // Refresh in background
     syncCandidateData();
+  } else {
+    // Attempt automatic quick-pair with authentic local RESII candidate (Sumed Chalakh)
+    apiClient.quickPair().then((result) => {
+      currentState.isConnected = true;
+      currentState.token = result.token;
+      currentState.user = result.user;
+      chrome.storage?.local?.set({
+        resii_token: result.token,
+        resii_user: result.user
+      });
+      syncCandidateData();
+    }).catch((e) => {
+      console.log('[RESII] Standby - manual connection ready');
+    });
   }
+});
+
+// ============================================================================
+// TAB-AWARE STATE REGISTRY & NAVIGATION LIFECYCLE
+// ============================================================================
+
+export function isSupportedJobUrl(url: string): boolean {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname.toLowerCase();
+    if (
+      host.includes('greenhouse.io') ||
+      host.includes('lever.co') ||
+      host.includes('myworkdayjobs.com') ||
+      host.includes('workday.com') ||
+      host.includes('csod.com') ||
+      host.includes('icims.com') ||
+      host.includes('smartrecruiters.com') ||
+      host.includes('ashbyhq.com') ||
+      host.includes('bamboohr.com') ||
+      host.includes('workable.com') ||
+      host.includes('taleo.net') ||
+      host.includes('successfactors') ||
+      (host.includes('linkedin.com') && (path.includes('/jobs') || path.includes('/job/'))) ||
+      host.includes('careers.google.com') ||
+      (host.includes('google.com') && (path.includes('careers') || path.includes('/forms/'))) ||
+      host.includes('forms.gle') ||
+      host.includes('forms.office.com') ||
+      host.includes('forms.microsoft.com') ||
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      url.startsWith('file:///') ||
+      /(job|career|apply|application|requisition|candidate|recruiting|vacancy|opening)/i.test(url)
+    ) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+export const tabStateRegistry = new Map<number, TabStateRecord>();
+
+// 1. Tab Activation (Switching between tabs)
+chrome.tabs?.onActivated?.addListener(async (activeInfo) => {
+  const { tabId } = activeInfo;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab?.url) return;
+    const isSupported = isSupportedJobUrl(tab.url);
+    const existing = tabStateRegistry.get(tabId);
+    if (existing) {
+      existing.lastUpdated = Date.now();
+    }
+    // Notify supported tab to restore its UI state
+    if (isSupported && tab.id) {
+      chrome.tabs.sendMessage(tab.id, { type: 'TAB_ACTIVATED', payload: { tabId } }).catch(() => {});
+    }
+  } catch (err) {
+    // Tab may be closed or restricted chrome:// URL
+  }
+});
+
+// 2. Tab Update / Navigation
+chrome.tabs?.onUpdated?.addListener((tabId, changeInfo, tab) => {
+  // Trigger when URL changes or navigation completes
+  if (changeInfo.url || changeInfo.status === 'complete') {
+    const currentUrl = changeInfo.url || tab?.url || '';
+    if (!currentUrl) return;
+    const isSupported = isSupportedJobUrl(currentUrl);
+    const existing = tabStateRegistry.get(tabId);
+
+    // If navigated to a new URL
+    if (existing && existing.url !== currentUrl) {
+      // Invalidate old scan session and tickets so old state cannot be reused
+      if (existing.scanId) {
+        activeScanLedger.delete(existing.scanId);
+      }
+      if (!isSupported) {
+        // Navigated away from supported job page to unrelated site!
+        tabStateRegistry.delete(tabId);
+        chrome.tabs.sendMessage(tabId, { type: 'NAVIGATED_AWAY' }).catch(() => {});
+      } else {
+        // Navigated to another supported job page: update tab record
+        tabStateRegistry.set(tabId, {
+          tabId,
+          url: currentUrl,
+          origin: new URL(currentUrl).origin,
+          isSupported: true,
+          jobContext: null,
+          scanId: null,
+          lastUpdated: Date.now()
+        });
+        chrome.tabs.sendMessage(tabId, { type: 'PAGE_TRANSITION', payload: { url: currentUrl } }).catch(() => {});
+      }
+    } else if (!existing && isSupported) {
+      try {
+        tabStateRegistry.set(tabId, {
+          tabId,
+          url: currentUrl,
+          origin: new URL(currentUrl).origin,
+          isSupported: true,
+          jobContext: null,
+          scanId: null,
+          lastUpdated: Date.now()
+        });
+      } catch (_) {}
+    }
+  }
+});
+
+// 3. Tab Closure (Clean up tab state and bound scan sessions)
+chrome.tabs?.onRemoved?.addListener((tabId) => {
+  const state = tabStateRegistry.get(tabId);
+  if (state?.scanId) {
+    activeScanLedger.delete(state.scanId);
+  }
+  tabStateRegistry.delete(tabId);
+
+  // Invalidate any scan sessions and tickets associated with this tab
+  for (const [scanId, session] of activeScanLedger.entries()) {
+    if (session.tabId === tabId) {
+      activeScanLedger.delete(scanId);
+    }
+  }
+});
+
+// 4. Action button click with on-demand activeTab injection for custom/unsupported domains
+chrome.action?.onClicked?.addListener((tab) => {
+  if (!tab?.id) return;
+  chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR' }, (res) => {
+    if (chrome.runtime?.lastError || !res) {
+      // Content script may not be injected yet (e.g. custom domain via activeTab permission)
+      if (chrome.scripting?.executeScript) {
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id! },
+          files: ['content/index.js']
+        }).then(() => {
+          setTimeout(() => {
+            chrome.tabs.sendMessage(tab.id!, { type: 'TOGGLE_SIDEBAR' }).catch(() => {});
+          }, 150);
+        }).catch((err) => {
+          console.log('[RESII] Action click target not responsive or restricted:', err);
+        });
+      }
+    }
+  });
 });
 
 async function syncCandidateData() {
@@ -87,7 +257,7 @@ interface ScanSession {
   tickets: Map<string, AuthTicket>;
 }
 
-const activeScanLedger = new Map<string, ScanSession>();
+export const activeScanLedger = new Map<string, ScanSession>();
 
 function purgeStaleScanSessions() {
   const now = Date.now();
@@ -190,6 +360,13 @@ chrome.runtime?.onMessage?.addListener((message: ExtensionMessage, sender, sendR
             expiresAt,
             tickets: new Map<string, AuthTicket>()
           });
+
+          // Link scanId to tab registry
+          const tabRec = tabStateRegistry.get(sender.tab.id);
+          if (tabRec) {
+            tabRec.scanId = scanId;
+            tabRec.lastUpdated = Date.now();
+          }
 
           sendResponse({
             success: true,
@@ -501,14 +678,14 @@ chrome.runtime?.onMessage?.addListener((message: ExtensionMessage, sender, sendR
         }
 
         case 'PAIR_EXTENSION': {
-          const { pairingCode, email, password } = message.payload;
+          const { pairingCode, email, password, quickPair } = message.payload || {};
           let result;
           if (pairingCode) {
             result = await apiClient.pairWithCode(pairingCode);
           } else if (email && password) {
             result = await apiClient.pairWithCredentials(email, password);
           } else {
-            throw new Error('Missing pairing credentials');
+            result = await apiClient.quickPair();
           }
 
           currentState.isConnected = true;
@@ -560,6 +737,123 @@ chrome.runtime?.onMessage?.addListener((message: ExtensionMessage, sender, sendR
         case 'TRACK_APPLICATION': {
           const result = await apiClient.trackApplication(message.payload);
           sendResponse({ success: true, data: result });
+          break;
+        }
+
+        case 'TAILOR_RESUME': {
+          if (!currentState.isConnected || !currentState.token) {
+            sendResponse({ success: false, error: 'Extension not paired. Connect your RESII account first.' });
+            break;
+          }
+          const { resumeId, jobDescription, jobTitle, companyName } = message.payload;
+          const targetResumeId = resumeId || currentState.selectedResumeId || currentState.resumes[0]?.id || 'primary';
+          const plan = await apiClient.tailorResume(
+            targetResumeId,
+            jobDescription,
+            jobTitle || 'Target Role',
+            companyName || 'Target Company'
+          );
+          sendResponse({ success: true, data: plan });
+          break;
+        }
+
+        case 'MATCH_RESUME': {
+          if (!currentState.isConnected || !currentState.token) {
+            sendResponse({ success: false, error: 'Extension not paired. Connect your RESII account first.' });
+            break;
+          }
+          const { resumeId, jobDescription } = message.payload;
+          const targetResumeId = resumeId || currentState.selectedResumeId || currentState.resumes[0]?.id || 'primary';
+          const report = await apiClient.matchResume(targetResumeId, jobDescription);
+          sendResponse({ success: true, data: report });
+          break;
+        }
+
+        case 'APPLY_TAILORING': {
+          if (!currentState.isConnected || !currentState.token) {
+            sendResponse({ success: false, error: 'Extension not paired. Connect your RESII account first.' });
+            break;
+          }
+          const { reviewId, acceptedChanges } = message.payload;
+          const applied = await apiClient.applyTailoring(reviewId, acceptedChanges);
+          sendResponse({ success: true, data: applied });
+          break;
+        }
+
+        case 'TAILOR_AND_ATTACH': {
+          if (!currentState.isConnected || !currentState.token) {
+            sendResponse({ success: false, error: 'Extension not paired. Connect your RESII account first.' });
+            break;
+          }
+          const { resumeId, jobDescription, jobTitle, companyName, acceptedChanges, targetFormat } = message.payload;
+          const targetResumeId = resumeId || currentState.selectedResumeId || currentState.resumes[0]?.id || 'primary';
+          try {
+            const attached = await apiClient.tailorAndAttachResume(
+              targetResumeId,
+              jobDescription,
+              jobTitle || 'Target Role',
+              companyName || 'Target Company',
+              acceptedChanges,
+              targetFormat || 'docx'
+            );
+            sendResponse({ success: true, data: attached });
+          } catch (err: any) {
+            sendResponse({ success: false, error: err.message || 'Tailoring failed' });
+          }
+          break;
+        }
+
+        case 'ROTATE_TOKEN': {
+          if (!currentState.isConnected || !currentState.token) {
+            sendResponse({ success: false, error: 'Extension not paired.' });
+            break;
+          }
+          const rot = await apiClient.rotateToken();
+          currentState.token = rot.token;
+          chrome.storage?.local?.set({ resii_token: rot.token });
+          sendResponse({ success: true, data: rot });
+          break;
+        }
+
+        case 'REFRESH_PROFILE': {
+          await syncCandidateData();
+          sendResponse({
+            success: true,
+            data: {
+              profile: currentState.profile,
+              facts: currentState.facts,
+              resumes: currentState.resumes
+            }
+          });
+          break;
+        }
+
+        case 'REGISTER_TAB_CONTEXT': {
+          if (sender.tab?.id !== undefined) {
+            const origin = resolveBrowserOrigin(sender) || '';
+            const currentUrl = sender.tab.url || sender.url || '';
+            tabStateRegistry.set(sender.tab.id, {
+              tabId: sender.tab.id,
+              url: currentUrl,
+              origin,
+              isSupported: isSupportedJobUrl(currentUrl),
+              jobContext: message.payload.context,
+              scanId: null,
+              lastUpdated: Date.now()
+            });
+          }
+          sendResponse({ success: true });
+          break;
+        }
+
+        case 'GET_TAB_STATE': {
+          const targetTabId = message.payload?.tabId ?? sender.tab?.id;
+          if (targetTabId !== undefined) {
+            const tabState = tabStateRegistry.get(targetTabId);
+            sendResponse({ success: true, data: tabState || null });
+          } else {
+            sendResponse({ success: false, error: 'No tabId available' });
+          }
           break;
         }
 
