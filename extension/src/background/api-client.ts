@@ -34,6 +34,20 @@ export class ResiiApiClient {
     return headers;
   }
 
+  async quickPair() {
+    const res = await fetch(`${this.baseUrl}/api/v3/extension/quick-pair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Quick pair failed' }));
+      throw new Error(err.detail || 'Failed to auto-connect with active session');
+    }
+    const data = await res.json();
+    this.setToken(data.token);
+    return data;
+  }
+
   async pairWithCode(pairingCode: string) {
     const res = await fetch(`${this.baseUrl}/api/v3/extension/pair`, {
       method: 'POST',
@@ -142,6 +156,49 @@ export class ResiiApiClient {
     };
   }
 
+  async tailorAndAttachResume(
+    resumeId: string,
+    jobDescription: string,
+    jobTitle: string,
+    companyName: string,
+    acceptedChanges?: any[],
+    targetFormat: string = 'docx'
+  ): Promise<{
+    success: boolean;
+    tailoredId: string;
+    filename: string;
+    fileBase64: string;
+    mimeType: string;
+    pageCount: number;
+    atsScore: number;
+  }> {
+    const res = await fetch(`${this.baseUrl}/api/v3/tailor/tailor-and-attach`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({
+        resume_id: resumeId,
+        job_description: jobDescription,
+        job_title: jobTitle,
+        company_name: companyName,
+        accepted_changes: acceptedChanges,
+        target_format: targetFormat
+      })
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to tailor and attach resume: HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return {
+      success: data.success,
+      tailoredId: data.tailored_id,
+      filename: data.filename,
+      fileBase64: data.file_base64,
+      mimeType: data.mime_type,
+      pageCount: data.page_count,
+      atsScore: data.ats_score
+    };
+  }
+
   async disconnect() {
     if (!this.token) return;
     try {
@@ -164,6 +221,67 @@ export class ResiiApiClient {
       throw new Error('Failed to track application');
     }
     return await res.json();
+  }
+
+  async tailorResume(resumeId: string, jobDescription: string, jobTitle: string, companyName: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/v3/extension/tailor`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({
+        resume_id: resumeId,
+        job_description: jobDescription,
+        job_title: jobTitle,
+        company_name: companyName
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to tailor resume' }));
+      throw new Error(err.detail || 'Resume tailoring failed');
+    }
+    return await res.json();
+  }
+
+  async matchResume(resumeId: string, jobDescription: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/v3/extension/match`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({
+        resume_id: resumeId,
+        job_description: jobDescription
+      })
+    });
+    if (!res.ok) {
+      return null;
+    }
+    return await res.json();
+  }
+
+  async applyTailoring(reviewId: string, acceptedChanges: any[]): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/v3/tailor/apply`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({
+        review_id: reviewId,
+        accepted_changes: acceptedChanges
+      })
+    });
+    if (!res.ok) {
+      throw new Error('Failed to apply tailoring changes');
+    }
+    return await res.json();
+  }
+
+  async rotateToken(): Promise<{ token: string; expires_at: number }> {
+    const res = await fetch(`${this.baseUrl}/api/v3/extension/rotate-token`, {
+      method: 'POST',
+      headers: this.getHeaders()
+    });
+    if (!res.ok) {
+      throw new Error('Failed to rotate extension token');
+    }
+    const data = await res.json();
+    this.setToken(data.token);
+    return data;
   }
 }
 
