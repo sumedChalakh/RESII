@@ -142,7 +142,7 @@ STRONG_VERBS = [
 
 
 def _suggest_rewrite(bullet_text: str) -> Optional[str]:
-    """Generates an intelligent ATS rewrite suggestion based on the candidate's actual text."""
+    """Generates an authentic ATS rewrite suggestion based on the candidate's actual text."""
     clean = bullet_text.strip()
     if not clean or len(clean) < 15:
         return None
@@ -152,21 +152,15 @@ def _suggest_rewrite(bullet_text: str) -> Optional[str]:
     
     # Check if first word is already a strong past-tense action verb
     first_is_strong = any(v.lower() == first_word.lower() for v in STRONG_VERBS)
-    has_metrics = bool(re.search(r'(\d+%|\$\d+|\d+\+?|\b\d+\b)', clean))
 
-    if first_is_strong and has_metrics:
-        # Already high quality, suggest an amplified variant
-        return f"{first_word.capitalize()} and optimized {clean[len(first_word):].strip()}, accelerating delivery efficiency."
-    elif not first_is_strong:
+    if not first_is_strong:
         # Prepend or swap with a strong action verb
         chosen_verb = STRONG_VERBS[hash(clean) % len(STRONG_VERBS)]
         if first_word.lower() in ["responsible", "helped", "worked", "managed", "assisted", "did"]:
             remainder = " ".join(words[2:]) if len(words) > 2 and words[1].lower() in ["for", "with", "on", "to"] else " ".join(words[1:])
-            return f"{chosen_verb} {remainder}, improving process throughput by 25%."
+            return f"{chosen_verb} {remainder}."
         else:
-            return f"{chosen_verb} {clean[:1].lower() + clean[1:]}, enhancing operational performance."
-    elif not has_metrics:
-        return f"{clean.rstrip('.')}, increasing team productivity by 30%."
+            return f"{chosen_verb} {clean[:1].lower() + clean[1:]}."
 
     return None
 
@@ -298,8 +292,12 @@ def parse_text_into_document_tree(raw_text: str, filename: str = "Resume.pdf") -
     else:
         # Check if there are content lines before the first section header
         first_marker_idx = section_markers[0]["line_idx"]
-        intro_lines = [lines[i] for i in range(first_marker_idx) if i not in header_line_indices]
-        if intro_lines:
+        intro_lines = [
+            lines[i] for i in range(first_marker_idx) 
+            if i not in header_line_indices and "@" not in lines[i] and not (phone and phone in lines[i]) and len(lines[i].strip()) > 15
+        ]
+        # Only create an intro summary section if the first marker is NOT already a summary
+        if intro_lines and section_markers[0]["type"] != "summary":
             raw_sections.append({
                 "type": "summary",
                 "title": "Professional Summary",
