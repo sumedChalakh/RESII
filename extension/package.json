@@ -1,12 +1,12 @@
 {
-  "name": "resii-browser-extension",
+  "name": "rezifi-browser-extension",
   "version": "1.0.0",
-  "description": "RESII Chrome Extension - Human-Supervised Application Autofill & Intelligence",
+  "description": "Rezifi Chrome Extension - Human-Supervised Application Autofill & Intelligence",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc && node scripts/build.js",
-    "test": "node --test tests/*.test.js || echo 'Tests run via automated runner'"
+    "build": "node scripts/build.js",
+    "test": "node tests/test-runner.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.260",
