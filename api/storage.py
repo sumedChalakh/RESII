@@ -2,6 +2,7 @@ import os
 import uuid
 import tempfile
 import shutil
+import hashlib
 from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from api.config import settings
@@ -50,6 +51,7 @@ class FileStorageManager:
                     pass
             raise
 
+        file_hash = hashlib.sha256(content).hexdigest()
         managed_file = ManagedFileModel(
             id=file_id,
             user_id=user_id,
@@ -58,6 +60,8 @@ class FileStorageManager:
             content_type=content_type,
             file_size=len(content),
             storage_path=stored_filename,  # store relative path to avoid leaking server filesystem
+            file_hash=file_hash,
+            is_immutable=True,
             created_at=datetime_iso()
         )
         db.add(managed_file)
@@ -88,6 +92,35 @@ class FileStorageManager:
             content = f.read()
 
         return record.original_filename, content
+
+    def verify_file_integrity(self, db: Session, user_id: str, file_id: str) -> bool:
+        """
+        Cryptographically verifies that the file on disk matches its immutable SHA-256 hash.
+        Raises ValueError if tampered, FileNotFoundError if missing.
+        """
+        record = db.query(ManagedFileModel).filter(
+            ManagedFileModel.id == file_id,
+            ManagedFileModel.user_id == user_id
+        ).first()
+
+        if not record:
+            raise FileNotFoundError(f"File '{file_id}' not found for user '{user_id}'.")
+
+        safe_rel_path = os.path.basename(record.storage_path)
+        full_path = os.path.join(self.base_dir, safe_rel_path).replace("\\", "/")
+        if not os.path.exists(full_path):
+            raise FileNotFoundError(f"Underlying storage for file '{file_id}' is missing.")
+
+        with open(full_path, "rb") as f:
+            current_bytes = f.read()
+
+        current_hash = hashlib.sha256(current_bytes).hexdigest()
+        if record.file_hash and current_hash != record.file_hash:
+            raise ValueError(
+                f"File integrity violation for file '{file_id}': stored hash {record.file_hash} "
+                f"does not match disk hash {current_hash}."
+            )
+        return True
 
     def delete_file(self, db: Session, user_id: str, file_id: str) -> bool:
         """Deletes a file if owned by the user, cleaning up both DB and disk."""
