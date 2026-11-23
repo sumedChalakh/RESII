@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional, Iterator
 from pydantic import BaseModel
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Response, Request, status, Header, Depends
 from api.ingestion import extract_text_from_file, parse_text_into_document_tree
-from api.layout_engine import calculate_layout_budget, compute_ats_score
+from api.layout_engine import calculate_layout_budget, compute_ats_score, compute_ats_detailed_analysis
 from api.auth import get_current_user_required, get_current_user_optional
 from api.schemas import UserSession
 from api.security import validate_file_content
@@ -653,7 +653,11 @@ def get_resume_document(
 
     doc = resume_record["document"]
     layout = calculate_layout_budget(doc)
-    ats_score = compute_ats_score(doc)
+    analysis = compute_ats_detailed_analysis(doc)
+    ats_score = analysis["ats_score"]
+
+    with SessionLocal() as db:
+        real_jobs_count = db.query(JobListingModel).filter(JobListingModel.is_active == True).count()
 
     response.headers["X-Resume-Version"] = str(resume_record["version"])
     response.headers["X-Page-Count"] = str(layout["page_count"])
@@ -666,6 +670,11 @@ def get_resume_document(
         "version": resume_record["version"],
         "is_primary": resume_record["is_primary"],
         "ats_score": ats_score,
+        "writing_score": analysis["writing_score"],
+        "format_score": analysis["format_score"],
+        "recruiter_summary": analysis["recruiter_summary"],
+        "ats_facts": analysis["ats_facts"],
+        "real_jobs_count": real_jobs_count,
         "layout": layout,
         "document": doc
     }
@@ -708,7 +717,11 @@ def update_resume_document(
         new_doc["header"] = resume_record["document"]["header"]
     
     layout = calculate_layout_budget(new_doc)
-    ats_score = compute_ats_score(new_doc)
+    analysis = compute_ats_detailed_analysis(new_doc)
+    ats_score = analysis["ats_score"]
+
+    with SessionLocal() as db:
+        real_jobs_count = db.query(JobListingModel).filter(JobListingModel.is_active == True).count()
 
     resume_record["version"] = new_version
     resume_record["document"] = new_doc
@@ -727,6 +740,11 @@ def update_resume_document(
         "title": resume_record["title"],
         "version": new_version,
         "ats_score": ats_score,
+        "writing_score": analysis["writing_score"],
+        "format_score": analysis["format_score"],
+        "recruiter_summary": analysis["recruiter_summary"],
+        "ats_facts": analysis["ats_facts"],
+        "real_jobs_count": real_jobs_count,
         "layout": layout,
         "document": new_doc
     }
