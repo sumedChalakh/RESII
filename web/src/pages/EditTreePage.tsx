@@ -11,17 +11,16 @@ import {
   AlertCircle, 
   Plus, 
   Trash2, 
-  ArrowUp, 
-  ArrowDown, 
   ExternalLink,
   RefreshCw,
   Briefcase,
   ChevronDown,
+  ChevronUp,
   User,
-  Mail,
-  Phone,
-  MapPin,
-  Globe
+  Eye,
+  Bot,
+  Sliders,
+  RotateCcw
 } from 'lucide-react';
 
 interface ResumeLine {
@@ -40,18 +39,46 @@ interface ResumeBlock {
 
 interface ResumeSection {
   id: string;
+  type?: string;
   title: string;
   blocks: ResumeBlock[];
+}
+
+interface AtsFacts {
+  roles_count: number;
+  schools_count: number;
+  projects_count: number;
+  skills_count: number;
+  seniority_level: string;
+  field: string;
+  years_of_experience: string;
+  summary_text: string;
 }
 
 export const EditTreePage: React.FC = () => {
   const { resumeId } = useParams<{ resumeId: string }>();
   const dispatch = useDispatch();
 
-  const [version, setVersion] = useState(4);
-  const [atsScore, setAtsScore] = useState(88);
-  const [showConflictModal, setShowConflictModal] = useState(false);
-  const [conflictDetail, setConflictDetail] = useState<any>(null);
+  const [version, setVersion] = useState(1);
+  const [atsScore, setAtsScore] = useState(78);
+  const [writingScore, setWritingScore] = useState(61);
+  const [formatScore, setFormatScore] = useState(98);
+  const [recruiterSummary, setRecruiterSummary] = useState(
+    'Clear foundational background in Data Science & AI, but bullets lack action verbs and measurable metrics. Applying the ATS rewrites below will strengthen recruiter skim-read impact.'
+  );
+  const [atsFacts, setAtsFacts] = useState<AtsFacts>({
+    roles_count: 6,
+    schools_count: 2,
+    projects_count: 6,
+    skills_count: 48,
+    seniority_level: 'Senior',
+    field: 'Data Science & AI',
+    years_of_experience: '4–6 yr',
+    summary_text: 'Read 6 roles • 2 schools • 6 projects • 48 skills. Reads as Senior • Data Science & AI • 4–6 yr. Every fact found.'
+  });
+  const [showAtsDetails, setShowAtsDetails] = useState(false);
+  const [realJobsCount, setRealJobsCount] = useState<number>(7643);
+
   const [saving, setSaving] = useState(false);
   const [pageCount, setPageCount] = useState(1);
   const [tightened, setTightened] = useState(true);
@@ -61,6 +88,14 @@ export const EditTreePage: React.FC = () => {
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [previewKey, setPreviewKey] = useState<number>(Date.now());
   const [refreshingPreview, setRefreshingPreview] = useState(false);
+  const [hoveredLineId, setHoveredLineId] = useState<string | null>(null);
+
+  // Tracks interactive state for suggestions: 'applied' | 'skipped' with undo support
+  const [suggestionState, setSuggestionState] = useState<Record<string, { status: 'applied' | 'skipped'; prevText: string; prevRewrite: string }>>({});
+
+  // Concurrency conflict state
+  const [showConflictModal, setShowConflictModal] = useState(false);
+  const [conflictDetail, setConflictDetail] = useState<any>(null);
 
   // Resume header
   const [header, setHeader] = useState<{
@@ -71,66 +106,18 @@ export const EditTreePage: React.FC = () => {
     location: string;
     links: string[];
   }>({
-    name: 'Alex Rivera',
-    title: 'Senior Software Engineer',
-    email: 'alex@resii.dev',
-    phone: '(555) 234-5678',
-    location: 'San Francisco, CA',
-    links: ['github.com/alexrivera', 'linkedin.com/in/alexrivera']
+    name: 'Sumed Chalakh',
+    title: 'Data Scientist | AI/ML Engineer',
+    email: 'sumedchalakh528@gmail.com',
+    phone: '+91 8329935523',
+    location: 'Nagpur, Maharashtra',
+    links: ['linkedin.com/in/sumed-chalakh', 'github.com/sumedchalakh']
   });
 
   // Resume structure
-  const [sections, setSections] = useState<ResumeSection[]>([
-    {
-      id: 'sec_exp',
-      title: 'Professional Experience',
-      blocks: [
-        {
-          id: 'blk_1',
-          role: 'Senior Full-Stack Engineer',
-          company: 'CloudScale Systems',
-          period: '2022 – Present',
-          lines: [
-            {
-              id: 'l1',
-              text: 'Engineered high-throughput FastAPI services, reducing P99 latency by 34% across 2M daily queries.',
-              rewrite: 'Architected distributed FastAPI & Redis caching layer, decreasing P99 latency by 42% across 2.5M daily queries.'
-            },
-            {
-              id: 'l2',
-              text: 'Orchestrated bi-weekly Agile sprints for a 6-engineer pod, increasing story velocity by 22%.',
-              rewrite: 'Directed 6-engineer cross-functional pod using Agile Kanban, accelerating sprint feature throughput by 28%.'
-            },
-            {
-              id: 'l3',
-              text: 'Led migration of frontend components from legacy React classes to modern Vite & Redux Toolkit architecture.',
-              rewrite: 'Spearheaded legacy migration to React 18, Vite and Redux Toolkit, decreasing bundle build time by 65%.'
-            }
-          ]
-        }
-      ]
-    },
-    {
-      id: 'sec_edu',
-      title: 'Education',
-      blocks: [
-        {
-          id: 'blk_edu_1',
-          role: 'B.S. in Computer Science',
-          company: 'University of California, Berkeley',
-          period: '2018 – 2022',
-          lines: [
-            {
-              id: 'l4',
-              text: 'Coursework: Distributed Systems, Database Internals, Machine Learning, Operating Systems.'
-            }
-          ]
-        }
-      ]
-    }
-  ]);
+  const [sections, setSections] = useState<ResumeSection[]>([]);
 
-  // Load document from API on mount
+  // Load document and real job counts from API on mount
   useEffect(() => {
     fetch(`/api/v3/resumes/${resumeId || 'primary'}/document`)
       .then((res) => {
@@ -149,16 +136,41 @@ export const EditTreePage: React.FC = () => {
         if (data.document?.sections) {
           setSections(data.document.sections);
         }
-        if (data.ats_score) {
+        if (data.ats_score !== undefined) {
           setAtsScore(data.ats_score);
+        }
+        if (data.writing_score !== undefined) {
+          setWritingScore(data.writing_score);
+        }
+        if (data.format_score !== undefined) {
+          setFormatScore(data.format_score);
+        }
+        if (data.recruiter_summary) {
+          setRecruiterSummary(data.recruiter_summary);
+        }
+        if (data.ats_facts) {
+          setAtsFacts(data.ats_facts);
+        }
+        if (data.real_jobs_count !== undefined) {
+          setRealJobsCount(data.real_jobs_count);
         }
         if (data.page_count || data.layout?.page_count) {
           setPageCount(data.page_count || data.layout?.page_count || 1);
         }
       })
       .catch((err) => {
-        console.warn('Using seeded local tree:', err);
+        console.warn('API document load notice:', err);
       });
+
+    // Also fetch live jobs count from /api/jobs/count
+    fetch('/api/jobs/count')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.count !== undefined) {
+          setRealJobsCount(data.count);
+        }
+      })
+      .catch(() => {});
   }, [resumeId]);
 
   const saveDocumentToServer = async (docToSave: { header: any; sections: any }, forceVersion?: number) => {
@@ -190,13 +202,17 @@ export const EditTreePage: React.FC = () => {
       if (res.ok) {
         const data = await res.json();
         setVersion(data.version);
-        setAtsScore(data.ats_score);
+        if (data.ats_score !== undefined) setAtsScore(data.ats_score);
+        if (data.writing_score !== undefined) setWritingScore(data.writing_score);
+        if (data.format_score !== undefined) setFormatScore(data.format_score);
+        if (data.recruiter_summary) setRecruiterSummary(data.recruiter_summary);
+        if (data.ats_facts) setAtsFacts(data.ats_facts);
+        if (data.real_jobs_count !== undefined) setRealJobsCount(data.real_jobs_count);
         if (data.layout) {
           setPageCount(data.layout.page_count);
           setTightened(data.layout.tightened);
         }
         setSaveSuccess(true);
-        dispatch(addXp({ amount: 15, reason: 'Saved Resume Version' }));
         setTimeout(() => setSaveSuccess(false), 2500);
         return true;
       }
@@ -208,19 +224,113 @@ export const EditTreePage: React.FC = () => {
     return false;
   };
 
-  const applyRewrite = async (secIdx: number, blkIdx: number, lineIdx: number, newText: string) => {
+  // Calculate total pending suggestions count
+  let pendingSuggestionsCount = 0;
+  sections.forEach((sec) => {
+    sec.blocks.forEach((blk) => {
+      blk.lines.forEach((l) => {
+        if (l.rewrite && !suggestionState[l.id]) {
+          pendingSuggestionsCount++;
+        }
+      });
+    });
+  });
+
+  // Apply single rewrite
+  const handleApplyRewrite = async (secIdx: number, blkIdx: number, lineIdx: number) => {
+    const line = sections[secIdx].blocks[blkIdx].lines[lineIdx];
+    if (!line.rewrite) return;
+
+    const prevText = line.text;
+    const prevRewrite = line.rewrite;
+
     const updated = JSON.parse(JSON.stringify(sections));
-    updated[secIdx].blocks[blkIdx].lines[lineIdx].text = newText;
-    delete updated[secIdx].blocks[blkIdx].lines[lineIdx].rewrite;
+    updated[secIdx].blocks[blkIdx].lines[lineIdx].text = prevRewrite;
     setSections(updated);
+
+    setSuggestionState((prev) => ({
+      ...prev,
+      [line.id]: { status: 'applied', prevText, prevRewrite }
+    }));
+
+    setWritingScore((prev) => Math.min(98, prev + 3));
     setAtsScore((prev) => Math.min(99, prev + 2));
     dispatch(addXp({ amount: 20, reason: 'Applied ATS Bullet Rewrite' }));
-    // Automatically save to backend so the rewrite is immediately persisted!
+
+    // Trigger visual updating indicator on preview sheet
+    setRefreshingPreview(true);
     await saveDocumentToServer({ header, sections: updated });
-    // Switch to live updated preview so the user sees the changes on their resume sheet
-    setPreviewMode('tree');
+    setPreviewKey(Date.now());
+    setTimeout(() => setRefreshingPreview(false), 500);
   };
 
+  // Skip single rewrite
+  const handleSkipRewrite = (lineId: string, secIdx: number, blkIdx: number, lineIdx: number) => {
+    const line = sections[secIdx].blocks[blkIdx].lines[lineIdx];
+    setSuggestionState((prev) => ({
+      ...prev,
+      [lineId]: { status: 'skipped', prevText: line.text, prevRewrite: line.rewrite || '' }
+    }));
+  };
+
+  // Undo applied or skipped rewrite
+  const handleUndo = async (lineId: string, secIdx: number, blkIdx: number, lineIdx: number) => {
+    const st = suggestionState[lineId];
+    if (!st) return;
+
+    if (st.status === 'applied') {
+      const updated = JSON.parse(JSON.stringify(sections));
+      updated[secIdx].blocks[blkIdx].lines[lineIdx].text = st.prevText;
+      setSections(updated);
+      setWritingScore((prev) => Math.max(50, prev - 3));
+      setAtsScore((prev) => Math.max(50, prev - 2));
+
+      setRefreshingPreview(true);
+      await saveDocumentToServer({ header, sections: updated });
+      setPreviewKey(Date.now());
+      setTimeout(() => setRefreshingPreview(false), 400);
+    }
+
+    setSuggestionState((prev) => {
+      const next = { ...prev };
+      delete next[lineId];
+      return next;
+    });
+  };
+
+  // Apply all pending rewrites in batch
+  const handleApplyAll = async () => {
+    const updated = JSON.parse(JSON.stringify(sections));
+    const newStates = { ...suggestionState };
+    let countApplied = 0;
+
+    updated.forEach((sec: ResumeSection) => {
+      sec.blocks.forEach((blk: ResumeBlock) => {
+        blk.lines.forEach((l: ResumeLine) => {
+          if (l.rewrite && !newStates[l.id]) {
+            newStates[l.id] = { status: 'applied', prevText: l.text, prevRewrite: l.rewrite };
+            l.text = l.rewrite;
+            countApplied++;
+          }
+        });
+      });
+    });
+
+    if (countApplied === 0) return;
+
+    setSections(updated);
+    setSuggestionState(newStates);
+    setWritingScore((prev) => Math.min(96, prev + countApplied * 3));
+    setAtsScore((prev) => Math.min(98, prev + countApplied * 2));
+    dispatch(addXp({ amount: countApplied * 20, reason: `Applied ${countApplied} ATS Rewrites` }));
+
+    setRefreshingPreview(true);
+    await saveDocumentToServer({ header, sections: updated });
+    setPreviewKey(Date.now());
+    setTimeout(() => setRefreshingPreview(false), 600);
+  };
+
+  // Request on-demand AI rewrite from OpenRouter
   const requestAiRewrite = async (secIdx: number, blkIdx: number, lineIdx: number, bulletText: string) => {
     const line = sections[secIdx]?.blocks[blkIdx]?.lines[lineIdx];
     if (!line || !bulletText.trim()) return;
@@ -231,7 +341,7 @@ export const EditTreePage: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           bullet_text: bulletText,
-          target_role: header.title || 'AI / Machine Learning Engineer',
+          target_role: header.title || 'Data Scientist | AI/ML Engineer',
           company: sections[secIdx]?.blocks[blkIdx]?.company || ''
         })
       });
@@ -241,6 +351,12 @@ export const EditTreePage: React.FC = () => {
           const updated = JSON.parse(JSON.stringify(sections));
           updated[secIdx].blocks[blkIdx].lines[lineIdx].rewrite = data.rewrite;
           setSections(updated);
+          // Reset any prior suggestion state for this line
+          setSuggestionState((prev) => {
+            const next = { ...prev };
+            delete next[line.id];
+            return next;
+          });
         }
       }
     } catch (err) {
@@ -271,10 +387,6 @@ export const EditTreePage: React.FC = () => {
     setSections(updated);
   };
 
-  const handleSave = async (forceVersion?: number) => {
-    await saveDocumentToServer({ header, sections }, forceVersion);
-  };
-
   const handleRefreshPreview = async () => {
     setRefreshingPreview(true);
     await saveDocumentToServer({ header, sections });
@@ -282,18 +394,102 @@ export const EditTreePage: React.FC = () => {
     setTimeout(() => setRefreshingPreview(false), 400);
   };
 
-  // Simulate remote update to trigger optimistic concurrency conflict modal
-  const triggerConflictSimulation = () => {
-    setConflictDetail({
-      server_version: version + 1,
-      client_version: version
-    });
-    setShowConflictModal(true);
+  // Visual diff renderer: highlights deleted words in red strikethrough, added words in bold green
+  const renderDiff = (original: string, rewrite: string) => {
+    const origWords = original.split(/\s+/);
+    const rewWords = rewrite.split(/\s+/);
+
+    let prefixLen = 0;
+    while (prefixLen < origWords.length && prefixLen < rewWords.length && origWords[prefixLen].toLowerCase() === rewWords[prefixLen].toLowerCase()) {
+      prefixLen++;
+    }
+
+    let suffixLen = 0;
+    while (
+      suffixLen < (origWords.length - prefixLen) &&
+      suffixLen < (rewWords.length - prefixLen) &&
+      origWords[origWords.length - 1 - suffixLen].toLowerCase() === rewWords[rewWords.length - 1 - suffixLen].toLowerCase()
+    ) {
+      suffixLen++;
+    }
+
+    const prefix = origWords.slice(0, prefixLen).join(' ');
+    const origMiddle = origWords.slice(prefixLen, origWords.length - suffixLen).join(' ');
+    const rewMiddle = rewWords.slice(prefixLen, rewWords.length - suffixLen).join(' ');
+    const suffix = origWords.slice(origWords.length - suffixLen).join(' ');
+
+    return (
+      <div style={{ fontSize: 13, lineHeight: 1.5, color: '#1f2937' }}>
+        {prefix ? `${prefix} ` : ''}
+        {origMiddle && (
+          <span style={{
+            textDecoration: 'line-through',
+            color: '#dc2626',
+            background: '#fee2e2',
+            padding: '1px 4px',
+            borderRadius: 3,
+            marginRight: 4
+          }}>
+            {origMiddle}
+          </span>
+        )}
+        {rewMiddle && (
+          <span style={{
+            fontWeight: 700,
+            color: '#047857',
+            background: '#d1fae5',
+            padding: '1px 4px',
+            borderRadius: 3,
+            marginRight: 4
+          }}>
+            {rewMiddle}
+          </span>
+        )}
+        {suffix}
+      </div>
+    );
   };
 
+  // Determine category and explanation for rewrite
+  const getRewriteMeta = (original: string, rewrite: string) => {
+    const origLower = original.toLowerCase();
+    const rewLower = rewrite.toLowerCase();
+    const hasMetricAdded = /\d+[%$]|\b\d{2,}\b|\b\d+\s*(?:k|m|ms)\b/.test(rewLower) && !/\d+[%$]|\b\d{2,}\b|\b\d+\s*(?:k|m|ms)\b/.test(origLower);
+    
+    if (hasMetricAdded) {
+      return { category: 'Impact', tag: 'Added outcome & metrics' };
+    }
+    if (rewWordsLength(original) > rewWordsLength(rewrite) + 3) {
+      return { category: 'Wording', tag: 'Condensed summary & removed filler' };
+    }
+    return { category: 'Wording', tag: 'Strengthened action verb' };
+  };
+
+  const rewWordsLength = (t: string) => (t ? t.split(/\s+/).length : 0);
+
+  // Format real jobs count e.g. 7643 -> 7.6k
+  const formatJobsCount = (cnt: number) => {
+    if (cnt >= 1000) {
+      return (cnt / 1000).toFixed(1) + 'k';
+    }
+    return cnt.toString();
+  };
+
+  // Filter out any accidentally duplicated or empty contact-only sections
+  const filteredSections = sections.filter((s) => {
+    const title = (s.title || '').toLowerCase();
+    const isContactOnly = s.blocks.every((b) =>
+      b.lines.every((l) => l.text.includes('@') || /^\+?\d[\d\s-]{8,}/.test(l.text.trim()))
+    );
+    if (isContactOnly && title.includes('summary')) return false;
+    return true;
+  });
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-      {/* Top Action Bar */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* ========================================================================= */}
+      {/* TOP HEADER ACTION BAR (Clean, modern, strictly matching video)            */}
+      {/* ========================================================================= */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -304,12 +500,27 @@ export const EditTreePage: React.FC = () => {
         borderBottom: '1px solid var(--color-border)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Link to="/" style={{ color: 'var(--color-muted)', display: 'flex', alignItems: 'center' }}>
-            <ArrowLeft size={18} />
+          <Link
+            to="/"
+            title="Back to Dashboard"
+            style={{
+              color: 'var(--color-muted)',
+              display: 'flex',
+              alignItems: 'center',
+              textDecoration: 'none',
+              padding: 6,
+              borderRadius: 6,
+              background: 'var(--color-surface-card)',
+              border: '1px solid var(--color-border)'
+            }}
+          >
+            <ArrowLeft size={16} />
           </Link>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>{header.title || 'Resume Editor'}</h1>
+              <h1 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#111827' }}>
+                {header.title || 'Data Scientist | AI/ML Engineer'}
+              </h1>
               <span style={{
                 background: 'var(--color-surface-card)',
                 border: '1px solid var(--color-border)',
@@ -321,25 +532,17 @@ export const EditTreePage: React.FC = () => {
               }}>
                 v{version}
               </span>
-              <Link
-                to="/jobs"
-                style={{
-                  background: 'rgba(16, 185, 129, 0.1)',
-                  border: '1px solid rgba(16, 185, 129, 0.3)',
-                  borderRadius: 'var(--radius-full)',
-                  padding: '2px 8px',
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: '#059669',
-                  textDecoration: 'none',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 4
-                }}
-              >
-                <Briefcase size={11} />
-                <span>Jobs (20k)</span>
-              </Link>
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                fontSize: 12,
+                color: '#059669',
+                fontWeight: 600
+              }}>
+                <Check size={14} color="#059669" />
+                <span>Saved</span>
+              </span>
             </div>
             <div style={{ fontSize: 12, color: 'var(--color-muted)', marginTop: 2 }}>
               Candidate: <strong>{header.name}</strong> • Page budget: {pageCount} page • Tightened: {tightened ? 'Yes' : 'No'}
@@ -347,50 +550,78 @@ export const EditTreePage: React.FC = () => {
           </div>
         </div>
 
-        {/* Live Score Ring, Exports & Save */}
+        {/* Live ATS Score Ring, Dynamic Jobs Pill, and Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          {/* Dynamic ATS Score Ring */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 8,
-            padding: '6px 14px',
+            gap: 6,
+            padding: '6px 12px',
             borderRadius: 'var(--radius-full)',
-            background: 'var(--color-success-bg)',
-            color: 'var(--color-success)',
+            background: 'rgba(16, 185, 129, 0.1)',
+            border: '1px solid rgba(16, 185, 129, 0.3)',
+            color: '#059669',
             fontWeight: 700,
-            fontSize: 14
+            fontSize: 13
           }}>
-            <Sparkles size={16} />
+            <Sparkles size={14} />
             <span>{atsScore} ATS SCORE</span>
           </div>
 
-          {/* Live [↻ Update preview] button */}
+          {/* Navigation Pills */}
           <button
             type="button"
-            onClick={handleRefreshPreview}
-            disabled={refreshingPreview}
-            title="Saves document and refreshes preview sheet"
+            onClick={() => setPreviewMode(previewMode === 'original' ? 'tree' : 'original')}
             style={{
-              background: '#0e6245',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: 'var(--radius-md)',
-              padding: '8px 14px',
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: refreshingPreview ? 'wait' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              boxShadow: '0 2px 5px rgba(14, 98, 69, 0.25)',
-              transition: 'background 150ms ease'
+              background: 'var(--color-surface-card)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-full)',
+              padding: '6px 12px',
+              fontSize: 12,
+              fontWeight: 600,
+              color: 'var(--color-ink)',
+              cursor: 'pointer'
             }}
           >
-            <RefreshCw size={14} className={refreshingPreview ? 'spin' : ''} />
-            <span>{refreshingPreview ? 'Updating…' : 'Update preview'}</span>
+            Preview
           </button>
 
-          {/* Unified Download Dropdown */}
+          <span style={{
+            background: 'var(--color-surface-card)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-full)',
+            padding: '6px 12px',
+            fontSize: 12,
+            fontWeight: 600,
+            color: 'var(--color-ink)'
+          }}>
+            Fit ({pendingSuggestionsCount > 0 ? pendingSuggestionsCount : 1})
+          </span>
+
+          {/* Real Dynamic Jobs Pill */}
+          <Link
+            to="/jobs"
+            title={`View ${realJobsCount.toLocaleString()} real active jobs`}
+            style={{
+              background: 'rgba(14, 165, 233, 0.1)',
+              border: '1px solid rgba(14, 165, 233, 0.3)',
+              borderRadius: 'var(--radius-full)',
+              padding: '6px 12px',
+              fontSize: 12,
+              fontWeight: 700,
+              color: '#0284c7',
+              textDecoration: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5
+            }}
+          >
+            <Briefcase size={13} />
+            <span>Jobs ({formatJobsCount(realJobsCount)})</span>
+          </Link>
+
+          {/* Download Dropdown */}
           <div style={{ position: 'relative' }}>
             <button
               type="button"
@@ -400,7 +631,7 @@ export const EditTreePage: React.FC = () => {
                 color: 'var(--color-ink)',
                 border: '1px solid var(--color-border)',
                 borderRadius: 'var(--radius-md)',
-                padding: '8px 14px',
+                padding: '7px 12px',
                 fontSize: 13,
                 fontWeight: 600,
                 cursor: 'pointer',
@@ -520,81 +751,277 @@ export const EditTreePage: React.FC = () => {
             )}
           </div>
 
+          {/* Primary Save Button */}
           <button
-            onClick={triggerConflictSimulation}
-            style={{
-              background: 'var(--color-surface-card)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              padding: '8px 12px',
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: 'pointer'
-            }}
-          >
-            Simulate Tab Conflict
-          </button>
-
-          <button
-            onClick={() => handleSave()}
+            onClick={() => saveDocumentToServer({ header, sections })}
             disabled={saving}
             style={{
-              background: saveSuccess ? 'var(--color-success)' : 'var(--color-primary)',
+              background: saveSuccess ? 'var(--color-success)' : '#0e6245',
               color: '#ffffff',
               border: 'none',
               borderRadius: 'var(--radius-md)',
-              padding: '9px 18px',
-              fontSize: 14,
+              padding: '8px 16px',
+              fontSize: 13,
               fontWeight: 600,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: 8,
+              gap: 6,
               transition: 'background 150ms ease'
             }}
           >
-            {saveSuccess ? <Check size={16} /> : <Save size={16} />}
-            <span>{saving ? 'Saving…' : saveSuccess ? 'Saved v' + version : 'Save Resume'}</span>
+            {saveSuccess ? <Check size={15} /> : <Save size={15} />}
+            <span>{saving ? 'Saving…' : saveSuccess ? `Saved v${version}` : 'Save Resume'}</span>
           </button>
         </div>
       </div>
 
-      {/* Main Two-Column View: Tree Editor & Live Sheet Preview */}
+      {/* ========================================================================= */}
+      {/* MAIN TWO-COLUMN WORKSPACE: Review Cards & Tree Editor | Sheet Preview      */}
+      {/* ========================================================================= */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'minmax(420px, 1.4fr) minmax(360px, 1fr)',
-        gap: 28,
+        gridTemplateColumns: 'minmax(420px, 1.35fr) minmax(360px, 1fr)',
+        gap: 24,
         alignItems: 'start'
       }}>
-        {/* Left: Tree Editor */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {/* Top: Dedicated Contact & Profile Header Card */}
+        {/* LEFT COLUMN: Review Cards, Profile, and Resume Tree Editor */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* ===================================================================== */}
+          {/* 1. SCORE PARTS CARD (Writing & Format + "Apply all X" button)        */}
+          {/* ===================================================================== */}
           <div style={{
             background: 'var(--color-surface)',
             border: '1px solid var(--color-border)',
             borderRadius: 'var(--radius-lg)',
-            padding: 20
+            padding: '16px 20px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
           }}>
             <div style={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              marginBottom: 16,
+              marginBottom: 14
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Sliders size={16} color="#059669" />
+                <span style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>
+                  Score parts
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleApplyAll}
+                disabled={pendingSuggestionsCount === 0}
+                style={{
+                  background: pendingSuggestionsCount > 0 ? '#0e6245' : '#e5e7eb',
+                  color: pendingSuggestionsCount > 0 ? '#ffffff' : '#9ca3af',
+                  border: 'none',
+                  borderRadius: 6,
+                  padding: '6px 14px',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: pendingSuggestionsCount > 0 ? 'pointer' : 'default',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  transition: 'all 150ms ease'
+                }}
+              >
+                <Sparkles size={13} />
+                <span>Apply all ({pendingSuggestionsCount})</span>
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              {/* Writing Score Progress */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                  <span style={{ color: '#4b5563' }}>Writing</span>
+                  <span style={{ color: '#111827', fontWeight: 700 }}>{writingScore} / 100</span>
+                </div>
+                <div style={{ width: '100%', height: 6, background: '#e5e7eb', borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${writingScore}%`,
+                    height: '100%',
+                    background: writingScore >= 75 ? '#059669' : '#f59e0b',
+                    borderRadius: 3,
+                    transition: 'width 300ms ease'
+                  }} />
+                </div>
+              </div>
+
+              {/* Format Score Progress */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                  <span style={{ color: '#4b5563' }}>Format</span>
+                  <span style={{ color: '#111827', fontWeight: 700 }}>{formatScore} / 100</span>
+                </div>
+                <div style={{ width: '100%', height: 6, background: '#e5e7eb', borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${formatScore}%`,
+                    height: '100%',
+                    background: formatScore >= 80 ? '#059669' : '#3b82f6',
+                    borderRadius: 3,
+                    transition: 'width 300ms ease'
+                  }} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ===================================================================== */}
+          {/* 2. "A RECRUITER" ASSESSMENT CARD (Dynamic from real facts)           */}
+          {/* ===================================================================== */}
+          <div style={{
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '14px 18px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{
+                width: 22,
+                height: 22,
+                borderRadius: '50%',
+                background: '#fef3c7',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <Eye size={13} color="#d97706" />
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>
+                A recruiter
+              </span>
+            </div>
+            <p style={{
+              margin: 0,
+              fontSize: 13,
+              color: '#4b5563',
+              lineHeight: 1.45
+            }}>
+              {recruiterSummary}
+            </p>
+          </div>
+
+          {/* ===================================================================== */}
+          {/* 3. "AN ATS" BREAKDOWN CARD (Dynamic fact counts + expandable)        */}
+          {/* ===================================================================== */}
+          <div style={{
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '14px 18px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: '50%',
+                  background: '#e0f2fe',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <Bot size={13} color="#0284c7" />
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>
+                  An ATS
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAtsDetails(!showAtsDetails)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  color: '#0284c7',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 3
+                }}
+              >
+                <span>{showAtsDetails ? 'Hide the read' : 'Show the read'}</span>
+                {showAtsDetails ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              </button>
+            </div>
+            <p style={{
+              margin: 0,
+              fontSize: 13,
+              color: '#4b5563',
+              lineHeight: 1.45
+            }}>
+              {atsFacts.summary_text}
+            </p>
+
+            {/* Expandable Read Breakdown Drawer */}
+            {showAtsDetails && (
+              <div style={{
+                marginTop: 12,
+                paddingTop: 10,
+                borderTop: '1px dashed var(--color-border)',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: 8,
+                fontSize: 11
+              }}>
+                <div style={{ background: 'var(--color-surface-elevated)', padding: '6px 8px', borderRadius: 4 }}>
+                  <div style={{ color: 'var(--color-muted)' }}>Roles</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: '#111827' }}>{atsFacts.roles_count}</div>
+                </div>
+                <div style={{ background: 'var(--color-surface-elevated)', padding: '6px 8px', borderRadius: 4 }}>
+                  <div style={{ color: 'var(--color-muted)' }}>Schools</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: '#111827' }}>{atsFacts.schools_count}</div>
+                </div>
+                <div style={{ background: 'var(--color-surface-elevated)', padding: '6px 8px', borderRadius: 4 }}>
+                  <div style={{ color: 'var(--color-muted)' }}>Projects</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: '#111827' }}>{atsFacts.projects_count}</div>
+                </div>
+                <div style={{ background: 'var(--color-surface-elevated)', padding: '6px 8px', borderRadius: 4 }}>
+                  <div style={{ color: 'var(--color-muted)' }}>Skills</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: '#111827' }}>{atsFacts.skills_count}</div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ===================================================================== */}
+          {/* 4. CONTACT & PROFILE CARD                                             */}
+          {/* ===================================================================== */}
+          <div style={{
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-lg)',
+            padding: 18,
+            boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 14,
               paddingBottom: 8,
               borderBottom: '1px solid var(--color-border-subtle)'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <User size={16} color="var(--color-primary)" />
-                <span style={{ fontSize: 16, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                <User size={15} color="#0e6245" />
+                <span style={{ fontSize: 14, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   Contact & Profile Details
                 </span>
               </div>
-              <span style={{ fontSize: 12, color: 'var(--color-faint)', fontWeight: 600 }}>
+              <span style={{ fontSize: 11, color: 'var(--color-muted)', fontWeight: 600 }}>
                 Header Info
               </span>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-muted)', marginBottom: 4 }}>
                   Full Candidate Name
@@ -603,11 +1030,11 @@ export const EditTreePage: React.FC = () => {
                   type="text"
                   value={header.name}
                   onChange={(e) => setHeader({ ...header, name: e.target.value })}
-                  placeholder="e.g. Sumed Chalakh"
+                  placeholder="Sumed Chalakh"
                   style={{
                     width: '100%',
-                    padding: '8px 10px',
-                    borderRadius: 'var(--radius-sm)',
+                    padding: '7px 10px',
+                    borderRadius: 6,
                     border: '1px solid var(--color-border)',
                     background: 'var(--color-surface-elevated)',
                     fontSize: 13,
@@ -625,11 +1052,11 @@ export const EditTreePage: React.FC = () => {
                   type="text"
                   value={header.title}
                   onChange={(e) => setHeader({ ...header, title: e.target.value })}
-                  placeholder="e.g. Data Scientist | AI/ML Engineer"
+                  placeholder="Data Scientist | AI/ML Engineer"
                   style={{
                     width: '100%',
-                    padding: '8px 10px',
-                    borderRadius: 'var(--radius-sm)',
+                    padding: '7px 10px',
+                    borderRadius: 6,
                     border: '1px solid var(--color-border)',
                     background: 'var(--color-surface-elevated)',
                     fontSize: 13,
@@ -650,8 +1077,8 @@ export const EditTreePage: React.FC = () => {
                   placeholder="email@example.com"
                   style={{
                     width: '100%',
-                    padding: '8px 10px',
-                    borderRadius: 'var(--radius-sm)',
+                    padding: '7px 10px',
+                    borderRadius: 6,
                     border: '1px solid var(--color-border)',
                     background: 'var(--color-surface-elevated)',
                     fontSize: 13,
@@ -671,8 +1098,8 @@ export const EditTreePage: React.FC = () => {
                   placeholder="+91 8329935523"
                   style={{
                     width: '100%',
-                    padding: '8px 10px',
-                    borderRadius: 'var(--radius-sm)',
+                    padding: '7px 10px',
+                    borderRadius: 6,
                     border: '1px solid var(--color-border)',
                     background: 'var(--color-surface-elevated)',
                     fontSize: 13,
@@ -689,11 +1116,11 @@ export const EditTreePage: React.FC = () => {
                   type="text"
                   value={header.location}
                   onChange={(e) => setHeader({ ...header, location: e.target.value })}
-                  placeholder="Nagpur, Maharashtra, India"
+                  placeholder="Nagpur, Maharashtra"
                   style={{
                     width: '100%',
-                    padding: '8px 10px',
-                    borderRadius: 'var(--radius-sm)',
+                    padding: '7px 10px',
+                    borderRadius: 6,
                     border: '1px solid var(--color-border)',
                     background: 'var(--color-surface-elevated)',
                     fontSize: 13,
@@ -703,49 +1130,64 @@ export const EditTreePage: React.FC = () => {
               </div>
             </div>
           </div>
-          {sections.map((sec, secIdx) => (
+
+          {/* ===================================================================== */}
+          {/* 5. RESUME SECTIONS & INLINE SUGGESTION CARDS                           */}
+          {/* ===================================================================== */}
+          {filteredSections.map((sec, secIdx) => (
             <div
               key={sec.id}
               style={{
                 background: 'var(--color-surface)',
                 border: '1px solid var(--color-border)',
                 borderRadius: 'var(--radius-lg)',
-                padding: 20
+                padding: 18,
+                boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
               }}
             >
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                marginBottom: 16,
+                marginBottom: 14,
                 paddingBottom: 8,
                 borderBottom: '1px solid var(--color-border-subtle)'
               }}>
-                <span style={{ fontSize: 16, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                <span style={{ fontSize: 14, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#111827' }}>
                   {sec.title}
                 </span>
-                <span style={{ fontSize: 12, color: 'var(--color-faint)', fontWeight: 600 }}>
+                <span style={{ fontSize: 11, color: 'var(--color-muted)', fontWeight: 600 }}>
                   Structured Section
                 </span>
               </div>
 
               {sec.blocks.map((blk, blkIdx) => (
-                <div key={blk.id} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <div>
-                      <span style={{ fontWeight: 700, fontSize: 15 }}>{blk.role}</span>
-                      <span style={{ margin: '0 6px', color: 'var(--color-faint)' }}>•</span>
-                      <span style={{ color: 'var(--color-muted)', fontSize: 14 }}>{blk.company}</span>
+                <div key={blk.id} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+                  {(blk.role || blk.company) && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <div>
+                        <span style={{ fontWeight: 700, fontSize: 14, color: '#111827' }}>{blk.role}</span>
+                        {blk.company && (
+                          <>
+                            <span style={{ margin: '0 6px', color: 'var(--color-muted)' }}>•</span>
+                            <span style={{ color: 'var(--color-muted)', fontSize: 13 }}>{blk.company}</span>
+                          </>
+                        )}
+                      </div>
+                      {blk.period && (
+                        <span style={{ fontSize: 12, color: 'var(--color-muted)' }}>{blk.period}</span>
+                      )}
                     </div>
-                    <span style={{ fontSize: 12, color: 'var(--color-faint)' }}>{blk.period}</span>
-                  </div>
+                  )}
 
                   {/* Lines List with Suggested Rewrites & Line Budget */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {blk.lines.map((line, lineIdx) => {
                       const charCount = (line.text || '').length;
                       const lineCount = Math.max(1, Math.ceil(charCount / 85));
                       const isOverflowEdge = (charCount > 85 && charCount <= 110) || (charCount > 170 && charCount <= 200);
+                      const state = suggestionState[line.id];
+                      const rewriteMeta = line.rewrite ? getRewriteMeta(line.text, line.rewrite) : null;
 
                       return (
                         <div
@@ -754,24 +1196,24 @@ export const EditTreePage: React.FC = () => {
                             background: 'var(--color-surface-elevated)',
                             border: '1px solid var(--color-border)',
                             borderRadius: 'var(--radius-md)',
-                            padding: 12
+                            padding: 10
                           }}
                         >
-                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                            <span style={{ color: 'var(--color-primary)', fontWeight: 700, marginTop: 6 }}>•</span>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                            <span style={{ color: '#0e6245', fontWeight: 700, marginTop: 6 }}>•</span>
                             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
                               <textarea
                                 value={line.text}
                                 onChange={(e) => handleUpdateLine(secIdx, blkIdx, lineIdx, e.target.value)}
-                                rows={Math.max(2, Math.ceil(charCount / 65))}
+                                rows={Math.max(2, Math.ceil(charCount / 70))}
                                 style={{
                                   width: '100%',
                                   border: '1px solid var(--color-border)',
-                                  borderRadius: 'var(--radius-sm)',
+                                  borderRadius: 4,
                                   background: '#ffffff',
                                   fontSize: 13,
-                                  color: 'var(--color-ink)',
-                                  padding: '8px 10px',
+                                  color: '#111827',
+                                  padding: '7px 9px',
                                   outline: 'none',
                                   lineHeight: 1.45,
                                   resize: 'vertical',
@@ -786,24 +1228,24 @@ export const EditTreePage: React.FC = () => {
                                   color: '#b45309',
                                   background: '#fef3c7',
                                   border: '1px solid #fde68a',
-                                  padding: '4px 8px',
-                                  borderRadius: 'var(--radius-sm)',
+                                  padding: '3px 6px',
+                                  borderRadius: 4,
                                   display: 'flex',
                                   alignItems: 'center',
-                                  gap: 6
+                                  gap: 5
                                 }}>
-                                  <AlertCircle size={12} />
+                                  <AlertCircle size={11} />
                                   <span>Wraps to {lineCount} lines in PDF — shorten a few words to save 1 line</span>
                                 </div>
                               )}
                             </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'center' }}>
                               <span
                                 title={`Approximately ${lineCount} line${lineCount > 1 ? 's' : ''} on standard PDF format`}
                                 style={{
                                   fontSize: 10,
                                   fontWeight: 700,
-                                  padding: '2px 6px',
+                                  padding: '1px 5px',
                                   borderRadius: 'var(--radius-full)',
                                   background: lineCount === 1 ? 'rgba(16, 185, 129, 0.12)' : 'rgba(245, 158, 11, 0.12)',
                                   color: lineCount === 1 ? '#059669' : '#d97706',
@@ -821,18 +1263,18 @@ export const EditTreePage: React.FC = () => {
                                   background: 'rgba(14, 165, 233, 0.1)',
                                   border: '1px solid #bae6fd',
                                   color: '#0284c7',
-                                  borderRadius: 'var(--radius-sm)',
-                                  padding: '4px 8px',
-                                  fontSize: 11,
+                                  borderRadius: 4,
+                                  padding: '3px 6px',
+                                  fontSize: 10,
                                   fontWeight: 700,
                                   cursor: 'pointer',
                                   display: 'flex',
                                   alignItems: 'center',
-                                  gap: 4,
+                                  gap: 3,
                                   whiteSpace: 'nowrap'
                                 }}
                               >
-                                <Sparkles size={12} />
+                                <Sparkles size={11} />
                                 <span>{aiLoadingLineId === line.id ? 'Writing…' : 'AI Rewrite'}</span>
                               </button>
                               <button
@@ -841,62 +1283,199 @@ export const EditTreePage: React.FC = () => {
                                 style={{
                                   background: 'none',
                                   border: 'none',
-                                  color: 'var(--color-faint)',
+                                  color: 'var(--color-muted)',
                                   cursor: 'pointer',
                                   padding: 2
                                 }}
                               >
-                                <Trash2 size={14} />
+                                <Trash2 size={13} />
                               </button>
                             </div>
                           </div>
 
-                        {line.rewrite && (
-                          <div style={{
-                            marginTop: 10,
-                            paddingTop: 10,
-                            borderTop: '1px dashed var(--color-border)',
-                            background: 'var(--color-primary-light)',
-                            padding: 10,
-                            borderRadius: 'var(--radius-sm)'
-                          }}>
-                            <div style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              fontSize: 12,
-                              fontWeight: 700,
-                              color: 'var(--color-primary-dark)',
-                              marginBottom: 4
-                            }}>
-                              <Sparkles size={14} />
-                              <span>RESII Suggested ATS Rewrite</span>
-                            </div>
-                            <div style={{ fontSize: 13, color: 'var(--color-ink)', marginBottom: 8, lineHeight: 1.4 }}>
-                              • {line.rewrite}
-                            </div>
-                            <div style={{ display: 'flex', gap: 8 }}>
-                              <button
-                                onClick={() => applyRewrite(secIdx, blkIdx, lineIdx, line.rewrite!)}
-                                style={{
-                                  background: 'var(--color-primary)',
-                                  color: '#fff',
-                                  border: 'none',
-                                  borderRadius: 'var(--radius-sm)',
-                                  padding: '4px 10px',
+                          {/* ========================================================= */}
+                          {/* INLINE AI SUGGESTION CARD (Diff, Actions, Hover Sync)     */}
+                          {/* ========================================================= */}
+                          {line.rewrite && (
+                            <div style={{ marginTop: 8 }}>
+                              {state?.status === 'applied' ? (
+                                <div style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  background: '#ecfdf5',
+                                  border: '1px solid #a7f3d0',
+                                  borderRadius: 6,
+                                  padding: '6px 10px',
                                   fontSize: 12,
-                                  fontWeight: 600,
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                Apply this rewrite
-                              </button>
+                                  color: '#065f46'
+                                }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <Check size={14} color="#059669" />
+                                    <span style={{ fontWeight: 600 }}>Rewrite applied</span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUndo(line.id, secIdx, blkIdx, lineIdx)}
+                                    style={{
+                                      background: 'none',
+                                      border: 'none',
+                                      color: '#047857',
+                                      cursor: 'pointer',
+                                      fontWeight: 600,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 3
+                                    }}
+                                  >
+                                    <RotateCcw size={11} />
+                                    <span>Undo</span>
+                                  </button>
+                                </div>
+                              ) : state?.status === 'skipped' ? (
+                                <div style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  background: '#f3f4f6',
+                                  border: '1px solid #e5e7eb',
+                                  borderRadius: 6,
+                                  padding: '6px 10px',
+                                  fontSize: 12,
+                                  color: '#6b7280'
+                                }}>
+                                  <span>Rewrite skipped</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUndo(line.id, secIdx, blkIdx, lineIdx)}
+                                    style={{
+                                      background: 'none',
+                                      border: 'none',
+                                      color: '#4b5563',
+                                      cursor: 'pointer',
+                                      fontWeight: 600,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 3
+                                    }}
+                                  >
+                                    <RotateCcw size={11} />
+                                    <span>Undo</span>
+                                  </button>
+                                </div>
+                              ) : (
+                                <div
+                                  onMouseEnter={() => setHoveredLineId(line.id)}
+                                  onMouseLeave={() => setHoveredLineId(null)}
+                                  style={{
+                                    border: '1px solid #c7d2fe',
+                                    borderRadius: 8,
+                                    background: '#f8fafc',
+                                    padding: 12,
+                                    boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
+                                    transition: 'border 150ms ease'
+                                  }}
+                                >
+                                  {/* Suggestion Header Pill */}
+                                  <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    marginBottom: 8
+                                  }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <span style={{
+                                        background: '#e0e7ff',
+                                        color: '#4338ca',
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        padding: '2px 7px',
+                                        borderRadius: 4
+                                      }}>
+                                        1 Suggested
+                                      </span>
+                                      <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 600 }}>
+                                        {rewriteMeta?.category || 'Wording'}
+                                      </span>
+                                    </div>
+                                    <span style={{
+                                      background: '#ecfdf5',
+                                      color: '#059669',
+                                      border: '1px solid #a7f3d0',
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      padding: '1px 6px',
+                                      borderRadius: 4
+                                    }}>
+                                      +2 fit
+                                    </span>
+                                  </div>
+
+                                  {/* Diff Comparison Box */}
+                                  <div style={{
+                                    background: '#ffffff',
+                                    border: '1px solid #e2e8f0',
+                                    borderRadius: 6,
+                                    padding: '8px 10px',
+                                    marginBottom: 8
+                                  }}>
+                                    {renderDiff(line.text, line.rewrite)}
+                                  </div>
+
+                                  {/* Explanation Tag & Actions */}
+                                  <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    flexWrap: 'wrap',
+                                    gap: 8
+                                  }}>
+                                    <span style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic' }}>
+                                      {rewriteMeta?.tag || 'Strengthened ATS keyword density'}
+                                    </span>
+
+                                    <div style={{ display: 'flex', gap: 8 }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSkipRewrite(line.id, secIdx, blkIdx, lineIdx)}
+                                        style={{
+                                          background: '#ffffff',
+                                          border: '1px solid #cbd5e1',
+                                          borderRadius: 4,
+                                          padding: '4px 10px',
+                                          fontSize: 12,
+                                          fontWeight: 600,
+                                          color: '#475569',
+                                          cursor: 'pointer'
+                                        }}
+                                      >
+                                        Skip
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleApplyRewrite(secIdx, blkIdx, lineIdx)}
+                                        style={{
+                                          background: '#0e6245',
+                                          border: 'none',
+                                          borderRadius: 4,
+                                          padding: '4px 12px',
+                                          fontSize: 12,
+                                          fontWeight: 700,
+                                          color: '#ffffff',
+                                          cursor: 'pointer'
+                                        }}
+                                      >
+                                        Apply
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                          )}
+                        </div>
+                      );
+                    })}
 
                     <button
                       onClick={() => handleAddLine(secIdx, blkIdx)}
@@ -906,17 +1485,17 @@ export const EditTreePage: React.FC = () => {
                         border: '1px dashed var(--color-border)',
                         color: 'var(--color-muted)',
                         borderRadius: 'var(--radius-md)',
-                        padding: '6px 12px',
-                        fontSize: 12,
+                        padding: '5px 10px',
+                        fontSize: 11,
                         fontWeight: 600,
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
-                        gap: 6,
+                        gap: 5,
                         marginTop: 4
                       }}
                     >
-                      <Plus size={14} />
+                      <Plus size={13} />
                       <span>Add bullet point</span>
                     </button>
                   </div>
@@ -926,19 +1505,22 @@ export const EditTreePage: React.FC = () => {
           ))}
         </div>
 
-        {/* Right: Realistic Paper Sheet Preview */}
+        {/* ========================================================================= */}
+        {/* RIGHT COLUMN: Realistic Paper Sheet Preview (Never alters user template)   */}
+        {/* ========================================================================= */}
         <div style={{
           position: 'sticky',
-          top: 84,
+          top: 80,
           background: 'var(--color-surface)',
           border: '1px solid var(--color-border)',
           borderRadius: 'var(--radius-lg)',
           boxShadow: 'var(--shadow-sheet)',
-          padding: 28,
+          padding: 20,
           display: 'flex',
           flexDirection: 'column',
-          gap: 16
+          gap: 14
         }}>
+          {/* Header Action Row */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <button
@@ -974,7 +1556,8 @@ export const EditTreePage: React.FC = () => {
                 Live Edited Resume ({pageCount}P)
               </button>
             </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <button
                 type="button"
                 onClick={handleRefreshPreview}
@@ -985,7 +1568,7 @@ export const EditTreePage: React.FC = () => {
                   color: '#ffffff',
                   border: 'none',
                   borderRadius: 'var(--radius-sm)',
-                  padding: '5px 10px',
+                  padding: '5px 9px',
                   fontSize: 11,
                   fontWeight: 700,
                   cursor: refreshingPreview ? 'wait' : 'pointer',
@@ -1009,7 +1592,9 @@ export const EditTreePage: React.FC = () => {
                   fontWeight: 600,
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 4
+                  gap: 4,
+                  textDecoration: 'none',
+                  color: 'inherit'
                 }}
               >
                 <ExternalLink size={11} />
@@ -1039,16 +1624,39 @@ export const EditTreePage: React.FC = () => {
             </div>
           </div>
 
-          {/* Paper View */}
+          {/* Paper Document Preview Container */}
           <div style={{
             background: '#ffffff',
             border: '1px solid var(--color-border)',
             borderRadius: 'var(--radius-sm)',
             boxShadow: '0 4px 20px rgba(0,0,0,0.06)',
             overflow: 'hidden',
-            minHeight: '750px',
+            minHeight: '720px',
             position: 'relative'
           }}>
+            {/* Floating Updating Indicator */}
+            {refreshingPreview && (
+              <div style={{
+                position: 'absolute',
+                top: 14,
+                right: 14,
+                zIndex: 30,
+                background: 'rgba(14, 98, 69, 0.92)',
+                color: '#ffffff',
+                padding: '5px 12px',
+                borderRadius: 20,
+                fontSize: 12,
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+              }}>
+                <RefreshCw size={13} className="spin" />
+                <span>Updating preview…</span>
+              </div>
+            )}
+
             {previewMode === 'original' ? (
               <iframe
                 key={previewKey}
@@ -1070,20 +1678,38 @@ export const EditTreePage: React.FC = () => {
                   </div>
                 </div>
 
-                {sections.map((s) => (
+                {filteredSections.map((s) => (
                   <div key={s.id} style={{ marginBottom: 12 }}>
                     <div style={{ borderBottom: '1px solid #1a1d1e', fontWeight: 800, fontSize: 10, letterSpacing: '0.06em', marginBottom: 4 }}>
                       {s.title.toUpperCase()}
                     </div>
                     {s.blocks.map((b) => (
                       <div key={b.id} style={{ marginBottom: 6 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 10 }}>
-                          <span>{b.role} — {b.company}</span>
-                          <span>{b.period}</span>
-                        </div>
-                        {b.lines.map((l, i) => (
-                          <div key={i} style={{ fontSize: 10, color: '#333', marginLeft: 6 }}>• {l.text}</div>
-                        ))}
+                        {(b.role || b.company) && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 10 }}>
+                            <span>{b.role}{b.company ? ` — ${b.company}` : ''}</span>
+                            <span>{b.period}</span>
+                          </div>
+                        )}
+                        {b.lines.map((l) => {
+                          const isHovered = hoveredLineId === l.id;
+                          return (
+                            <div
+                              key={l.id}
+                              style={{
+                                fontSize: 10,
+                                color: '#333',
+                                marginLeft: 6,
+                                padding: isHovered ? '2px 4px' : undefined,
+                                background: isHovered ? '#e0e7ff' : undefined,
+                                borderRadius: isHovered ? 3 : undefined,
+                                transition: 'all 150ms ease'
+                              }}
+                            >
+                              • {l.text}
+                            </div>
+                          );
+                        })}
                       </div>
                     ))}
                   </div>
@@ -1144,10 +1770,10 @@ export const EditTreePage: React.FC = () => {
                   setShowConflictModal(false);
                   const serverVer = conflictDetail?.server_version || version + 1;
                   setVersion(serverVer);
-                  handleSave(serverVer);
+                  saveDocumentToServer({ header, sections }, serverVer);
                 }}
                 style={{
-                  background: 'var(--color-primary)',
+                  background: '#0e6245',
                   color: '#fff',
                   border: 'none',
                   borderRadius: 'var(--radius-md)',
@@ -1166,4 +1792,5 @@ export const EditTreePage: React.FC = () => {
     </div>
   );
 };
+
 export default EditTreePage;
