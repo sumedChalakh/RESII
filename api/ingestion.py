@@ -290,11 +290,20 @@ def parse_text_into_document_tree(raw_text: str, filename: str = "Resume.pdf") -
                 "lines": remaining_lines
             })
     else:
-        # Check if there are content lines before the first section header
-        first_marker_idx = section_markers[0]["line_idx"]
+        def is_contact_line(t: str) -> bool:
+            clean = t.strip()
+            if "@" in clean or "linkedin.com" in clean.lower() or "github.com" in clean.lower():
+                return True
+            if phone and phone in clean:
+                return True
+            if re.search(r'\+?\d{1,4}[-.\s]?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}', clean):
+                return True
+            return False
+
+        # Filter out contact lines from intro
         intro_lines = [
             lines[i] for i in range(first_marker_idx) 
-            if i not in header_line_indices and "@" not in lines[i] and not (phone and phone in lines[i]) and len(lines[i].strip()) > 15
+            if i not in header_line_indices and not is_contact_line(lines[i]) and len(lines[i].strip()) > 20
         ]
         # Only create an intro summary section if the first marker is NOT already a summary
         if intro_lines and section_markers[0]["type"] != "summary":
@@ -307,12 +316,14 @@ def parse_text_into_document_tree(raw_text: str, filename: str = "Resume.pdf") -
         for i, marker in enumerate(section_markers):
             start = marker["line_idx"] + 1
             end = section_markers[i + 1]["line_idx"] if i + 1 < len(section_markers) else len(lines)
-            sec_lines = lines[start:end]
-            raw_sections.append({
-                "type": marker["type"],
-                "title": marker["title"],
-                "lines": sec_lines
-            })
+            sec_lines = [l for l in lines[start:end] if not is_contact_line(l)]
+            # If section has valid content lines, include it
+            if sec_lines or marker["type"] in ["experience", "education", "skills", "projects"]:
+                raw_sections.append({
+                    "type": marker["type"],
+                    "title": marker["title"],
+                    "lines": sec_lines
+                })
 
     # 3. Parse blocks and lines within each section
     parsed_sections: List[Dict[str, Any]] = []
@@ -397,6 +408,10 @@ def parse_text_into_document_tree(raw_text: str, filename: str = "Resume.pdf") -
                 "period": "",
                 "lines": [{"id": _stable_id("l", f"{blk_id}_{l}", i), "text": l} for i, l in enumerate(sec_lines)]
             })
+
+        total_valid_lines = sum(len(b.get("lines", [])) for b in blocks)
+        if total_valid_lines == 0 and sec_type not in ["skills", "education"]:
+            continue
 
         parsed_sections.append({
             "id": sec_id,
