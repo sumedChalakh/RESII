@@ -730,6 +730,20 @@ def update_resume_document(
     if "title" in payload:
         resume_record["title"] = payload["title"]
 
+    # Regenerate PDF on disk so that /raw and PDF exports immediately reflect applied rewrites
+    try:
+        active_tpl = resume_record.get("active_template") or "classic_spruce"
+        pdf_bytes = generate_pdf(new_doc, template_id=active_tpl)
+        with SessionLocal() as db:
+            mf = db.query(ManagedFileModel).filter(ManagedFileModel.resume_id == resume_id).first()
+            if mf and mf.storage_path:
+                full_path = os.path.join(storage_manager.base_dir, mf.storage_path)
+                with open(full_path, "wb") as f:
+                    f.write(pdf_bytes)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to regenerate PDF on disk: {e}")
+
     response.headers["X-Resume-Version"] = str(new_version)
     response.headers["X-Page-Count"] = str(layout["page_count"])
     response.headers["X-Tightened"] = "true" if layout["tightened"] else "false"
