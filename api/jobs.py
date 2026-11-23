@@ -295,6 +295,12 @@ def _format_job_model(
         "last_verified_at": job.last_verified_at
     }
 
+@router.get("/count")
+def get_jobs_count():
+    with SessionLocal() as db:
+        count = db.query(JobListingModel).filter(JobListingModel.is_active == True).count()
+        return {"count": count}
+
 @router.get("/feed")
 def get_jobs_feed(
     query: Optional[str] = Query(None),
