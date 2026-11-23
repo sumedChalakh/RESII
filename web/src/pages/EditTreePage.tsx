@@ -1330,17 +1330,19 @@ export const EditTreePage: React.FC = () => {
                         )}
                         {b.lines.map((l) => {
                           const isHovered = hoveredLineId === l.id;
+                          const isApplied = suggestionState[l.id]?.status === 'applied';
                           return (
                             <div
                               key={l.id}
                               style={{
                                 fontSize: 10,
-                                color: '#333',
+                                color: isApplied ? '#065f46' : '#333',
                                 marginLeft: 6,
-                                padding: isHovered ? '2px 4px' : undefined,
-                                background: isHovered ? '#ede9fe' : undefined,
-                                borderRadius: isHovered ? 3 : undefined,
-                                transition: 'all 150ms ease'
+                                padding: (isHovered || isApplied) ? '2px 4px' : undefined,
+                                background: isHovered ? '#ede9fe' : (isApplied ? '#d1fae5' : undefined),
+                                borderRadius: (isHovered || isApplied) ? 3 : undefined,
+                                fontWeight: isApplied ? 600 : undefined,
+                                transition: 'all 200ms ease'
                               }}
                             >
                               • {l.text}
